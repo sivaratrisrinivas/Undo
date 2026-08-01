@@ -3,18 +3,22 @@ import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
 import { retrievePolicyEvidenceFromSenso, type SensoOfficialSource } from "./src/adapters/senso-evidence-server.ts";
-import type { Product } from "./src/domain.ts";
+import { OFFICIAL_EVIDENCE_SOURCES, type Product } from "./src/domain.ts";
 
 function contentIds(value: string | undefined): ReadonlyArray<string> {
   return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function sensoEvidencePlugin(env: Record<string, string>): Plugin {
-  const sources: ReadonlyArray<SensoOfficialSource> = [
-    { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/returns-refunds", scope: { kind: "product", value: "Sennheiser HD 560S" }, contentIds: contentIds(env.SENSO_HEADPHONE_ZONE_CONTENT_IDS) },
-    { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/refund-policy", scope: { kind: "category", value: "Headphones" }, contentIds: contentIds(env.SENSO_CONCEPT_KART_CONTENT_IDS) },
-    { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" }, contentIds: contentIds(env.SENSO_FLIPKART_CONTENT_IDS) },
-  ];
+  const contentIdsByOffer = {
+    "headphone-zone": contentIds(env.SENSO_HEADPHONE_ZONE_CONTENT_IDS),
+    "concept-kart": contentIds(env.SENSO_CONCEPT_KART_CONTENT_IDS),
+    flipkart: contentIds(env.SENSO_FLIPKART_CONTENT_IDS),
+  } as const;
+  const sources: ReadonlyArray<SensoOfficialSource> = OFFICIAL_EVIDENCE_SOURCES.map((source) => ({
+    ...source,
+    contentIds: contentIdsByOffer[source.offerId],
+  }));
   return {
     name: "undo-senso-policy-evidence",
     configureServer(server) {

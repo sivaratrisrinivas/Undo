@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parsePremiumLimitInr,
+  OFFICIAL_EVIDENCE_SOURCES,
   SUPPORTED_OFFERS,
   SUPPORTED_PRODUCT,
   type CheckoutQuote,
@@ -14,8 +15,8 @@ import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) => ({
   offerId: offer.id,
   merchant: offer.merchant,
-  sourceUrl: offer.url,
-  scope: { kind: "product", value: "Sennheiser HD 560S" },
+  sourceUrl: OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offer.id)!.sourceUrl,
+  scope: OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offer.id)!.scope,
   collectedAt: "2026-08-01T10:30:00.000Z",
   exactText: "Deterministic ranking test evidence.",
   fingerprint: `sha256:${offer.id}`,
@@ -24,7 +25,7 @@ const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) 
 }));
 
 function makePolicy(offerId: Offer["id"]): PolicyAssessment {
-  const sourceUrl = SUPPORTED_OFFERS.find((offer) => offer.id === offerId)?.url ?? "";
+  const sourceUrl = OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offerId)?.sourceUrl ?? "";
   return {
     offerId,
     changeOfMind: "money_back",

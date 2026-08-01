@@ -11,7 +11,7 @@ import type {
   ReviewedEvidenceCache,
   UndoRecord,
 } from "./domain";
-import { SUPPORTED_OFFERS } from "./domain";
+import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_OFFERS } from "./domain";
 
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
@@ -242,9 +242,10 @@ export class AssessmentWorkflow {
         evidence,
         "Policy Evidence changed and requires human review",
         usingCache
-          ? undefined
-          : evidence.flatMap((snapshot) => {
-              const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
+            ? undefined
+            : evidence.flatMap((snapshot) => {
+                if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
+                const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
               return policy === undefined ? [] : [{ snapshot, policy }];
             }),
       );
@@ -434,30 +435,20 @@ export class AssessmentWorkflow {
       return (
         snapshots.length === 1 &&
         snapshot !== undefined &&
-        snapshot.merchant === offer.merchant &&
-        this.isOfficialSource(offer.id, snapshot.sourceUrl) &&
-        ((snapshot.scope.kind === "product" && snapshot.scope.value === "Sennheiser HD 560S") ||
-          (snapshot.scope.kind === "category" && snapshot.scope.value === "Headphones")) &&
+        OFFICIAL_EVIDENCE_SOURCES.some(
+          (source) =>
+            source.offerId === offer.id &&
+            source.merchant === snapshot.merchant &&
+            source.sourceUrl === snapshot.sourceUrl &&
+            source.scope.kind === snapshot.scope.kind &&
+            source.scope.value === snapshot.scope.value,
+        ) &&
         snapshot.exactText.trim() !== "" &&
         snapshot.fingerprint.trim() !== "" &&
         Number.isFinite(Date.parse(snapshot.collectedAt)) &&
         snapshot.retrievedVia === "senso"
       );
     });
-  }
-
-  private isOfficialSource(offerId: Offer["id"], sourceUrl: string): boolean {
-    try {
-      const hostname = new URL(sourceUrl).hostname.toLowerCase();
-      const officialHosts: Readonly<Record<Offer["id"], ReadonlyArray<string>>> = {
-        "headphone-zone": ["headphonezone.in", "www.headphonezone.in"],
-        "concept-kart": ["conceptkart.com", "www.conceptkart.com"],
-        flipkart: ["flipkart.com", "www.flipkart.com"],
-      };
-      return officialHosts[offerId].includes(hostname);
-    } catch {
-      return false;
-    }
   }
 
   private isApplicableReview(

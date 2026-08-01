@@ -1,15 +1,37 @@
 import type { EvidenceSnapshot, PolicyAssessment } from "../domain";
 
 function policyFacts(policy: PolicyAssessment) {
+  const changeOfMind = {
+    money_back: "Change-of-Mind Return",
+    store_credit: "Change-of-Mind Exchange",
+    none: "No change-of-mind remedy",
+  }[policy.changeOfMind];
+  const defect = { replacement: "Replacement", none: "No defect remedy" }[policy.defect];
+  const condition = {
+    unopened_only: "Sealed and unopened",
+    opened_unused: "Opened but unused",
+    trial_allowed: "Trial Permission",
+    unclear: "Policy Unclear",
+  }[policy.productCondition];
+  const transport = {
+    doorstep_pickup: "Doorstep pickup",
+    self_ship: "Self-shipping",
+    unclear: "Policy Unclear",
+  }[policy.returnTransport];
   const cost =
     policy.reversalCost.kind === "known"
-      ? `₹${policy.reversalCost.amountInr}`
-      : policy.reversalCost.kind;
+      ? `₹${policy.reversalCost.amountInr} Reversal Cost`
+      : {
+          explicit_none: "Explicit ₹0 Reversal Cost",
+          unstated: "Unstated Cost",
+          unpriced_required: "Unpriced Required Cost",
+          unclear: "Policy Unclear",
+        }[policy.reversalCost.kind];
   return {
-    remedy: `Change of mind: ${policy.changeOfMind}; defect: ${policy.defect}`,
-    window: `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}; ${policy.remedyWindow.requiredAction}`,
-    product_condition: policy.productCondition,
-    return_transport: policy.returnTransport,
+    remedy: `${changeOfMind}; defect remedy: ${defect}`,
+    window: `${policy.remedyWindow.days} days from delivery; request must be submitted`,
+    product_condition: condition,
+    return_transport: transport,
     buyer_paid_fees: cost,
   } as const;
 }

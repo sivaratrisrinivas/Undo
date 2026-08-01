@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parsePremiumLimitInr,
+  OFFICIAL_EVIDENCE_SOURCES,
   SUPPORTED_OFFERS,
   SUPPORTED_PRODUCT,
   type CheckoutQuote,
@@ -16,7 +17,7 @@ import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 const collectedAt = "2026-08-02T08:00:00.000Z";
 
 function policyFor(offerId: Offer["id"]): PolicyAssessment {
-  const sourceUrl = `${SUPPORTED_OFFERS.find((offer) => offer.id === offerId)?.url ?? ""}/returns`;
+  const sourceUrl = OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offerId)?.sourceUrl ?? "";
   return {
     offerId,
     changeOfMind: "money_back",
@@ -38,11 +39,12 @@ function policyFor(offerId: Offer["id"]): PolicyAssessment {
 }
 
 function snapshotFor(offer: Offer, fingerprint = `sha256:${offer.id}`): EvidenceSnapshot {
+  const source = OFFICIAL_EVIDENCE_SOURCES.find((candidate) => candidate.offerId === offer.id)!;
   return {
     offerId: offer.id,
     merchant: offer.merchant,
-    sourceUrl: `${offer.url}/returns`,
-    scope: { kind: "product", value: "Sennheiser HD 560S" },
+    sourceUrl: source.sourceUrl,
+    scope: source.scope,
     collectedAt,
     exactText: "Returns are accepted within 7 days of delivery.",
     fingerprint,
@@ -172,6 +174,11 @@ describe("Policy Evidence workflow", () => {
         record: { outcome: "blocked_by_policy", evidence: snapshots },
       },
     });
+    if (result._tag === "err" && result.error._tag === "NoEligibleOffer") {
+      expect(result.error.reviewCandidates?.map((candidate) => candidate.snapshot.offerId)).toEqual([
+        "headphone-zone",
+      ]);
+    }
   });
 
   it("blocks Stale Evidence older than 24 hours and creates an Undo Record", async () => {

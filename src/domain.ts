@@ -185,6 +185,18 @@ export const SUPPORTED_OFFERS: ReadonlyArray<Offer> = [
   },
 ];
 
+/** Curated official merchant sources accepted for Policy Evidence retrieval. */
+export const OFFICIAL_EVIDENCE_SOURCES = [
+  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/returns-refunds", scope: { kind: "product", value: "Sennheiser HD 560S" } },
+  { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/refund-policy", scope: { kind: "category", value: "Headphones" } },
+  { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" } },
+] as const satisfies ReadonlyArray<{
+  readonly offerId: Offer["id"];
+  readonly merchant: string;
+  readonly sourceUrl: string;
+  readonly scope: EvidenceSnapshot["scope"];
+}>;
+
 /** Resolves the preset or an approved Offer URL without performing external work. */
 export function resolveSupportedProduct(input: string): Product | undefined {
   if (input === "preset") {
