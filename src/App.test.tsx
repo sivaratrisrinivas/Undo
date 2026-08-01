@@ -31,7 +31,8 @@ describe("guided Reversibility Assessment", () => {
     await user.click(screen.getByRole("button", { name: "Review approval summary" }));
 
     expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
-    await user.click(screen.getByRole("checkbox", { name: /unopened-only restriction/i }));
+    await user.click(screen.getByRole("checkbox", { name: /sealed and unopened/i }));
+    await user.click(screen.getByRole("checkbox", { name: /No fee stated/i }));
     await user.click(screen.getByRole("button", { name: "Continue to checkout" }));
 
     expect(screen.getByRole("heading", { name: "Checkout decision" })).toBeVisible();
@@ -153,5 +154,36 @@ describe("guided Reversibility Assessment", () => {
       "No reversible Offer is within this Premium Limit",
     );
     expect(screen.queryByText(/recommended by/i)).not.toBeInTheDocument();
+  });
+
+  it("presents Tied Offers without a winner and requires the buyer to choose", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({ scenario: "tied" });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByText("These Offers are tied. Choose before continuing.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: "Concept Kart" }));
+    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeEnabled();
+  });
+
+  it("derives the Approval Summary from the selected policy facts", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({ scenario: "exchange" });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(await screen.findByRole("button", { name: "Inspect evidence" }));
+    await user.click(screen.getByRole("button", { name: "Review approval summary" }));
+
+    expect(screen.getByText(/Change-of-mind store credit · 10 days/)).toBeVisible();
+    expect(screen.getByText("Trial permitted")).toBeVisible();
+    expect(screen.getByText("Doorstep pickup · ₹0 evidenced")).toBeVisible();
   });
 });

@@ -1,10 +1,11 @@
 :root {
-  color: #17211d;
-  background: #f2f0e8;
+  color: var(--ink);
+  background: var(--page);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ink: #17211d;
+  --page: #f2f0e8;
   --muted: #64706a;
   --paper: #fbfaf5;
   --line: #d5d8ce;
@@ -80,6 +81,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .offer-row { display: grid; grid-template-columns: 1.1fr .7fr .9fr 1.4fr; gap: 1rem; align-items: center; padding: 1.2rem 1rem; border-bottom: 1px solid var(--line); }
 .offer-row.winner { background: var(--surface-recommended); box-shadow: inset 4px 0 0 var(--signal-dark); }
 .offer-row > div { display: grid; gap: .25rem; }
+.tie-choice { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; margin: 0 0 1.5rem; padding: 1rem; border: 1px solid var(--line); }
+.tie-choice legend { padding-inline: .35rem; font-weight: 750; }
+.tie-choice label { display: flex; align-items: center; gap: .4rem; }
 .merchant { font-size: 1.05rem; font-weight: 850; }
 .cell-label { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
 .evidence-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 2rem 0; }
@@ -103,7 +107,7 @@ dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .button-row { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
 .disabled-note { display: block; margin-top: .75rem; }
 .record-title { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
-.outcome { background: var(--blue); color: #fff; padding: .45rem .65rem; font-family: ui-monospace, monospace; }
+.outcome { background: var(--blue); color: var(--text-inverse); padding: .45rem .65rem; font-family: ui-monospace, monospace; }
 .record-grid { display: grid; grid-template-columns: 1.4fr .8fr; gap: 2rem; }
 .version-panel { background: var(--ink); color: var(--text-inverse); padding: 1.25rem; align-self: start; }
 .version-panel code { display: block; color: var(--text-code); margin-top: .7rem; font-size: .78rem; overflow-wrap: anywhere; }

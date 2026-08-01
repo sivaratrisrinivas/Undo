@@ -7,6 +7,7 @@ import { StageProgress } from "./components/StageProgress";
 import {
   parsePremiumLimitInr,
   resolveSupportedProduct,
+  type AssessedOffer,
   type Product,
   type ReversibilityAssessment,
   type UndoRecord,
@@ -37,8 +38,9 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
   const [premiumLimit, setPremiumLimit] = useState("2000");
   const [destinationReference, setDestinationReference] = useState("Bengaluru · destination-ref-01");
   const [assessment, setAssessment] = useState<ReversibilityAssessment>();
+  const [selectedOffer, setSelectedOffer] = useState<AssessedOffer>();
   const [record, setRecord] = useState<UndoRecord>();
-  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+  const [acknowledgedWarnings, setAcknowledgedWarnings] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
 
@@ -76,14 +78,17 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
       return;
     }
     setAssessment(result.value);
+    setSelectedOffer(
+      result.value.ranking._tag === "winner" ? result.value.ranking.offer : undefined,
+    );
     setStage("comparison");
   }
 
   function declinePurchase() {
-    if (assessment === undefined) {
+    if (assessment === undefined || selectedOffer === undefined) {
       return;
     }
-    setRecord(workflow.decline(assessment));
+    setRecord(workflow.decline(assessment, selectedOffer));
     setStage("record");
   }
 
@@ -112,10 +117,10 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
         <section className="workspace" aria-live="polite" aria-busy={loading}>
           {stage === "product" && <ProductInputStage error={error} inputMode={inputMode} productName={productName} url={url} onInputModeChange={setInputMode} onProductNameChange={setProductName} onStart={startAssessment} onUrlChange={setUrl} />}
           {stage === "constraints" && product !== undefined && <ConstraintsStage destinationReference={destinationReference} error={error} loading={loading} premiumLimit={premiumLimit} onCompare={() => void compareOffers()} onDestinationChange={setDestinationReference} onPremiumLimitChange={setPremiumLimit} />}
-          {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} onContinue={() => setStage("evidence")} />}
+          {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOfferId={selectedOffer?.offer.id} onContinue={() => setStage("evidence")} onSelect={setSelectedOffer} />}
           {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={() => setStage("approval")} />}
-          {stage === "approval" && assessment !== undefined && <ApprovalStage assessment={assessment} warningAcknowledged={warningAcknowledged} onAcknowledgementChange={setWarningAcknowledged} onContinue={() => setStage("checkout")} />}
-          {stage === "checkout" && assessment !== undefined && <CheckoutStage assessment={assessment} onDecline={declinePurchase} />}
+          {stage === "approval" && assessment !== undefined && selectedOffer !== undefined && <ApprovalStage assessment={assessment} selectedOffer={selectedOffer} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warning, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warning); else next.delete(warning); return next; })} onContinue={() => setStage("checkout")} />}
+          {stage === "checkout" && selectedOffer !== undefined && <CheckoutStage selectedOffer={selectedOffer} onDecline={declinePurchase} />}
           {stage === "record" && record !== undefined && <RecordStage record={record} />}
         </section>
       </main>

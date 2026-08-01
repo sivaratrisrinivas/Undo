@@ -1,4 +1,5 @@
 import type {
+  AssessedOffer,
   CheckoutQuote,
   EvidenceSnapshot,
   Offer,
@@ -13,23 +14,35 @@ import { SUPPORTED_OFFERS } from "./domain";
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
   readonly senso: {
-    retrieveEvidence(product: Product): Promise<ReadonlyArray<EvidenceSnapshot>>;
+    retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
   };
   readonly openAi: {
     extractPolicies(
       evidence: ReadonlyArray<EvidenceSnapshot>,
-    ): Promise<ReadonlyArray<PolicyAssessment>>;
+    ): Promise<AdapterResult<ReadonlyArray<PolicyAssessment>>>;
   };
   readonly prava: {
     quoteOffers(
       offers: ReadonlyArray<Offer>,
       destinationReference: string,
-    ): Promise<ReadonlyArray<CheckoutQuote>>;
-    submitCheckout(offer: Offer, maximumTotalInr: number): Promise<never>;
+    ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>>;
+    submitCheckout(offer: Offer, maximumTotalInr: number): Promise<AdapterResult<never>>;
   };
   readonly now: () => string;
   readonly nextRecordId: () => string;
 };
+
+/** Typed failure returned by an external adapter instead of rejecting. */
+export type AdapterFailure = {
+  readonly _tag: "DependencyUnavailable";
+  readonly dependency: "senso" | "openai" | "prava";
+  readonly cause: unknown;
+};
+
+/** Result contract used at each external adapter seam. */
+export type AdapterResult<T> =
+  | { readonly _tag: "ok"; readonly value: T }
+  | { readonly _tag: "err"; readonly error: AdapterFailure };
 
 /** Typed expected failures callers must render before authorization. */
 export type AssessmentFailure =
@@ -42,11 +55,6 @@ export type AssessmentFailure =
       readonly _tag: "NoEligibleOffer";
       readonly message: string;
       readonly reason: "purchase_unavailable" | "blocked_by_policy" | "blocked_by_price";
-    }
-  | {
-      readonly _tag: "TiedOffers";
-      readonly message: "Top Offers are tied; buyer choice is required";
-      readonly offerIds: ReadonlyArray<Offer["id"]>;
     };
 
 type AssessmentResult =
@@ -111,21 +119,44 @@ export class AssessmentWorkflow {
     premiumLimitInr: PremiumLimitInr,
     destinationReference: string,
   ): Promise<AssessmentResult> {
-    let evidence: ReadonlyArray<EvidenceSnapshot>;
-    let policies: ReadonlyArray<PolicyAssessment>;
-    let quotes: ReadonlyArray<CheckoutQuote>;
-    try {
-      [evidence, quotes] = await Promise.all([
-        this.adapters.senso.retrieveEvidence(product),
-        this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, destinationReference),
-      ]);
-      policies = await this.adapters.openAi.extractPolicies(evidence);
-    } catch (cause: unknown) {
+    const [evidenceResult, quotesResult] = await Promise.all([
+      this.adapters.senso.retrieveEvidence(product),
+      this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, destinationReference),
+    ]);
+    if (evidenceResult._tag === "err") {
       return {
         _tag: "err",
-        error: { _tag: "AssessmentUnavailable", message: "Policy check unavailable", cause },
+        error: {
+          _tag: "AssessmentUnavailable",
+          message: "Policy check unavailable",
+          cause: evidenceResult.error,
+        },
       };
     }
+    if (quotesResult._tag === "err") {
+      return {
+        _tag: "err",
+        error: {
+          _tag: "AssessmentUnavailable",
+          message: "Policy check unavailable",
+          cause: quotesResult.error,
+        },
+      };
+    }
+    const evidence = evidenceResult.value;
+    const quotes = quotesResult.value;
+    const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
+    if (policiesResult._tag === "err") {
+      return {
+        _tag: "err",
+        error: {
+          _tag: "AssessmentUnavailable",
+          message: "Policy check unavailable",
+          cause: policiesResult.error,
+        },
+      };
+    }
+    const policies = policiesResult.value;
 
     const availableTotals = quotes
       .filter((quote) => quote.purchaseAvailable)
@@ -192,39 +223,43 @@ export class AssessmentWorkflow {
     const tiedOfferIds = rankedOffers
       .filter((offer) => compareEligibleOffers(firstRankedOffer, offer) === 0)
       .map((offer) => offer.offer.id);
-    if (tiedOfferIds.length > 1) {
-      return {
-        _tag: "err",
-        error: {
-          _tag: "TiedOffers",
-          message: "Top Offers are tied; buyer choice is required",
-          offerIds: tiedOfferIds,
-        },
-      };
+    const rankByOfferId = new Map<Offer["id"], number>();
+    let currentRank = 1;
+    for (const [index, offer] of rankedOffers.entries()) {
+      const previousOffer = rankedOffers[index - 1];
+      if (previousOffer !== undefined && compareEligibleOffers(previousOffer, offer) !== 0) {
+        currentRank = index + 1;
+      }
+      rankByOfferId.set(offer.offer.id, currentRank);
     }
-
-    const rankByOfferId = new Map(rankedOffers.map((offer, index) => [offer.offer.id, index + 1]));
     const assessedOffers = unrankedOffers.map((offer) => ({
       ...offer,
       rank: rankByOfferId.get(offer.offer.id) ?? null,
       explanation:
-        offer.offer.id === firstRankedOffer.offer.id
+        tiedOfferIds.length > 1
+          ? tiedOfferIds.includes(offer.offer.id)
+            ? "Tied after every Remedy Ranking rule"
+            : offer.explanation
+          : offer.offer.id === firstRankedOffer.offer.id
           ? "Recommended by the Remedy Ranking"
           : offer.explanation,
     }));
-    const recommendedOffer = assessedOffers.find(
-      (offer) => offer.offer.id === firstRankedOffer.offer.id,
-    );
-    if (recommendedOffer === undefined) {
+    const topOffers = assessedOffers.filter((offer) => tiedOfferIds.includes(offer.offer.id));
+    const firstTopOffer = topOffers[0];
+    if (firstTopOffer === undefined) {
       throw new Error("Ranked Offer disappeared while constructing the assessment");
     }
+    const ranking =
+      topOffers.length > 1
+        ? ({ _tag: "tied", offers: topOffers } as const)
+        : ({ _tag: "winner", offer: firstTopOffer } as const);
 
     return {
       _tag: "ok",
       value: {
         product,
         offers: assessedOffers,
-        recommendedOffer,
+        ranking,
         premiumLimitInr,
         destinationReference,
       },
@@ -232,21 +267,26 @@ export class AssessmentWorkflow {
   }
 
   /** Records a buyer decision without submitting checkout. */
-  decline(assessment: ReversibilityAssessment): UndoRecord {
-    const recommendation = assessment.recommendedOffer;
+  decline(assessment: ReversibilityAssessment, selectedOffer: AssessedOffer): UndoRecord {
     return {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
       outcome: "buyer_declined",
       product: assessment.product,
-      selectedMerchant: recommendation.offer.merchant,
-      selectedSeller: recommendation.offer.seller,
-      confirmedCheckoutTotalInr: recommendation.checkoutQuote.totalInr,
+      selectedMerchant: selectedOffer.offer.merchant,
+      selectedSeller: selectedOffer.offer.seller,
+      confirmedCheckoutTotalInr: selectedOffer.checkoutQuote.totalInr,
       premiumLimitInr: assessment.premiumLimitInr,
       destinationReference: assessment.destinationReference,
       evidence: assessment.offers.map((offer) => offer.evidence),
       recommendation: {
-        offerId: recommendation.offer.id,
+        rankedOfferIds:
+          assessment.ranking._tag === "winner"
+            ? [assessment.ranking.offer.offer.id]
+            : assessment.ranking.offers.map((offer) => offer.offer.id),
+        selectedOfferId: selectedOffer.offer.id,
+        selection:
+          assessment.ranking._tag === "winner" ? "ranking_winner" : "buyer_selected_tie",
         rankingRules: "remedy-ranking/1.0",
       },
       authorizationState: "not_requested",

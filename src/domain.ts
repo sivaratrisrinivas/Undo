@@ -69,7 +69,9 @@ export type AssessedOffer = {
 export type ReversibilityAssessment = {
   readonly product: Product;
   readonly offers: ReadonlyArray<AssessedOffer>;
-  readonly recommendedOffer: AssessedOffer;
+  readonly ranking:
+    | { readonly _tag: "winner"; readonly offer: AssessedOffer }
+    | { readonly _tag: "tied"; readonly offers: ReadonlyArray<AssessedOffer> };
   readonly premiumLimitInr: number;
   readonly destinationReference: string;
 };
@@ -97,7 +99,9 @@ export type UndoRecord = {
   readonly destinationReference: string;
   readonly evidence: ReadonlyArray<EvidenceSnapshot>;
   readonly recommendation: {
-    readonly offerId: Offer["id"];
+    readonly rankedOfferIds: ReadonlyArray<Offer["id"]>;
+    readonly selectedOfferId: Offer["id"];
+    readonly selection: "ranking_winner" | "buyer_selected_tie";
     readonly rankingRules: "remedy-ranking/1.0";
   };
   readonly authorizationState: "not_requested";

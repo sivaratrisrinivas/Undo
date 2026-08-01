@@ -1,11 +1,11 @@
-import type { ReversibilityAssessment, UndoRecord } from "../domain";
+import type { AssessedOffer, UndoRecord } from "../domain";
 
 /** Renders the explicit decision point without submitting checkout. */
-export function CheckoutStage(props: { readonly assessment: ReversibilityAssessment; readonly onDecline: () => void }) {
+export function CheckoutStage(props: { readonly selectedOffer: AssessedOffer; readonly onDecline: () => void }) {
   return (
     <div className="stage-card compact decision-card">
       <p className="step-kicker">Step 6 of 7</p><h2>Checkout decision</h2>
-      <div className="decision-total"><span>Maximum authorized total</span><strong>₹{props.assessment.recommendedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</strong></div>
+      <div className="decision-total"><span>Maximum authorized total</span><strong>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</strong></div>
       <p className="stage-copy">No checkout has been submitted. Declining creates an Undo Record without contacting Prava checkout.</p>
       <div className="button-row"><button className="secondary-button" onClick={props.onDecline} type="button">Decline purchase</button><button className="primary-button" disabled type="button">Authorize sandbox checkout</button></div>
       <small className="disabled-note">Purchase submission is intentionally outside this decline-path walking skeleton.</small>

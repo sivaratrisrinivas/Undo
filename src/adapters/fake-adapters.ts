@@ -92,6 +92,7 @@ export function createFakeAdapters(options?: {
   readonly now?: string;
   readonly recordId?: string;
   readonly failSenso?: boolean;
+  readonly scenario?: "default" | "exchange" | "tied";
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
     sensoRequests: 0,
@@ -106,25 +107,79 @@ export function createFakeAdapters(options?: {
       retrieveEvidence() {
         activity.sensoRequests += 1;
         if (options?.failSenso === true) {
-          return Promise.reject(new Error("deterministic Senso failure"));
+          return Promise.resolve({
+            _tag: "err" as const,
+            error: {
+              _tag: "DependencyUnavailable" as const,
+              dependency: "senso" as const,
+              cause: new Error("deterministic Senso failure"),
+            },
+          });
         }
-        return Promise.resolve(evidence);
+        return Promise.resolve({ _tag: "ok" as const, value: evidence });
       },
     },
     openAi: {
       extractPolicies() {
         activity.openAiRequests += 1;
-        return Promise.resolve(policies);
+        const scenarioPolicies =
+          options?.scenario === "exchange"
+            ? policies.map((policy) =>
+                policy.offerId === "headphone-zone"
+                  ? {
+                      ...policy,
+                      changeOfMind: "store_credit" as const,
+                      productCondition: "trial_allowed" as const,
+                      remedyWindow: {
+                        days: 10,
+                        startsAt: "delivered" as const,
+                        requiredAction: "request_submitted" as const,
+                      },
+                      returnTransport: "doorstep_pickup" as const,
+                      reversalCost: { kind: "explicit_none" as const },
+                      materialConditions: [],
+                    }
+                  : policy,
+              )
+            : options?.scenario === "tied"
+            ? policies.map((policy) =>
+                policy.offerId === "concept-kart"
+                  ? {
+                      ...policy,
+                      changeOfMind: "money_back" as const,
+                      defect: "none" as const,
+                      productCondition: "unopened_only" as const,
+                      returnTransport: "self_ship" as const,
+                      reversalCost: { kind: "unstated" as const },
+                      materialConditions: ["Product must remain sealed and unopened."],
+                    }
+                  : policy,
+              )
+            : policies;
+        return Promise.resolve({ _tag: "ok" as const, value: scenarioPolicies });
       },
     },
     prava: {
       quoteOffers() {
         activity.pravaQuoteRequests += 1;
-        return Promise.resolve(quotes);
+        const scenarioQuotes =
+          options?.scenario === "tied"
+            ? quotes.map((quote) =>
+                quote.offerId === "concept-kart" ? { ...quote, totalInr: 14_990 } : quote,
+              )
+            : quotes;
+        return Promise.resolve({ _tag: "ok" as const, value: scenarioQuotes });
       },
       submitCheckout() {
         activity.pravaCheckoutRequests += 1;
-        return Promise.reject(new Error("Checkout is outside the decline-path skeleton"));
+        return Promise.resolve({
+          _tag: "err" as const,
+          error: {
+            _tag: "DependencyUnavailable" as const,
+            dependency: "prava" as const,
+            cause: new Error("Checkout is outside the decline-path skeleton"),
+          },
+        });
       },
     },
     now: () => options?.now ?? "2026-08-01T12:00:00.000Z",
