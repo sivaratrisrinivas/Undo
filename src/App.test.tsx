@@ -42,6 +42,8 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByText("undo-demo-001")).toBeVisible();
     expect(screen.getByText("policy-schema/1.0")).toBeVisible();
     expect(screen.getByText(/destination-ref-01/)).toBeVisible();
+    expect(screen.getByText("3 snapshots retained")).toBeVisible();
+    expect(screen.getByText("Not requested")).toBeVisible();
     expect(screen.queryByText(/card number|cvv|full address/i)).not.toBeInTheDocument();
     expect(adapters.activity).toEqual({
       sensoRequests: 1,
@@ -86,5 +88,70 @@ describe("guided Reversibility Assessment", () => {
       pravaCheckoutRequests: 0,
     });
     expect(screen.queryByText(/safe purchase/i)).not.toBeInTheDocument();
+  });
+
+  it("rejects an unsupported Product before any external adapter work", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters();
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("radio", { name: "Enter another Product" }));
+    await user.type(screen.getByLabelText("Product name"), "Sony WH-1000XM5");
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Not supported in this MVP");
+    expect(adapters.activity).toEqual({
+      sensoRequests: 0,
+      openAiRequests: 0,
+      pravaQuoteRequests: 0,
+      pravaCheckoutRequests: 0,
+    });
+  });
+
+  it("parses the Premium Limit before starting external work", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters();
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.clear(screen.getByLabelText("Premium Limit (₹)"));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter a whole-number Premium Limit of ₹0 or more",
+    );
+    expect(adapters.activity.sensoRequests).toBe(0);
+  });
+
+  it("shows an unavailable state when an assessment dependency fails", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({ failSenso: true });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Policy check unavailable");
+    expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
+  });
+
+  it("does not recommend an Offer outside the Premium Limit", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters();
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.clear(screen.getByLabelText("Premium Limit (₹)"));
+    await user.type(screen.getByLabelText("Premium Limit (₹)"), "0");
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No reversible Offer is within this Premium Limit",
+    );
+    expect(screen.queryByText(/recommended by/i)).not.toBeInTheDocument();
   });
 });

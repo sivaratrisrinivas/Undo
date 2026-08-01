@@ -19,12 +19,21 @@ export type Offer = {
 /** Policy facts extracted from an Evidence Snapshot. */
 export type PolicyAssessment = {
   readonly offerId: Offer["id"];
-  readonly changeOfMind: "money_back" | "none";
+  readonly changeOfMind: "money_back" | "store_credit" | "none";
   readonly defect: "replacement" | "none";
-  readonly productCondition: "unopened_only" | "unclear";
-  readonly remedyWindow: string;
+  readonly productCondition: "unopened_only" | "opened_unused" | "trial_allowed" | "unclear";
+  readonly remedyWindow: {
+    readonly days: number;
+    readonly startsAt: "delivered";
+    readonly requiredAction: "request_submitted";
+  };
   readonly returnTransport: "doorstep_pickup" | "self_ship" | "unclear";
-  readonly buyerPaidFees: "none_stated" | "unclear";
+  readonly reversalCost:
+    | { readonly kind: "explicit_none" }
+    | { readonly kind: "known"; readonly amountInr: number }
+    | { readonly kind: "unstated" }
+    | { readonly kind: "unpriced_required" }
+    | { readonly kind: "unclear" };
   readonly materialConditions: ReadonlyArray<string>;
   readonly quote: string;
 };
@@ -65,6 +74,16 @@ export type ReversibilityAssessment = {
   readonly destinationReference: string;
 };
 
+declare const premiumLimitBrand: unique symbol;
+
+/** A parsed, non-negative whole-rupee Premium Limit. */
+export type PremiumLimitInr = number & { readonly [premiumLimitBrand]: true };
+
+/** Result returned when parsing a Premium Limit at the UI boundary. */
+export type PremiumLimitParseResult =
+  | { readonly _tag: "ok"; readonly value: PremiumLimitInr }
+  | { readonly _tag: "err"; readonly message: string };
+
 /** A durable snapshot produced when the buyer declines the assessed purchase. */
 export type UndoRecord = {
   readonly id: string;
@@ -76,6 +95,12 @@ export type UndoRecord = {
   readonly confirmedCheckoutTotalInr: number;
   readonly premiumLimitInr: number;
   readonly destinationReference: string;
+  readonly evidence: ReadonlyArray<EvidenceSnapshot>;
+  readonly recommendation: {
+    readonly offerId: Offer["id"];
+    readonly rankingRules: "remedy-ranking/1.0";
+  };
+  readonly authorizationState: "not_requested";
   readonly assumptions: ReadonlyArray<string>;
   readonly versions: {
     readonly policySchema: "policy-schema/1.0";
@@ -127,4 +152,15 @@ export function resolveSupportedProduct(input: string): Product | undefined {
   return SUPPORTED_OFFERS.some((offer) => offer.url === normalizedInput)
     ? SUPPORTED_PRODUCT
     : undefined;
+}
+
+/** Parses an untrusted input value into a valid Premium Limit. */
+export function parsePremiumLimitInr(input: string): PremiumLimitParseResult {
+  const value = Number(input);
+  if (input.trim() === "" || !Number.isSafeInteger(value) || value < 0) {
+    return { _tag: "err", message: "Enter a whole-number Premium Limit of ₹0 or more" };
+  }
+
+  // SAFETY: The checks above establish the non-negative, whole, safe-integer invariant.
+  return { _tag: "ok", value: value as PremiumLimitInr };
 }

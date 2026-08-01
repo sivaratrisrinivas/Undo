@@ -15,6 +15,7 @@ export function StageProgress({ current }: { readonly current: number }) {
       <ol className="progress-list">
         {stages.map((stage, index) => (
           <li
+            aria-current={index === current ? "step" : undefined}
             className={index === current ? "progress-item current" : "progress-item"}
             key={stage}
           >

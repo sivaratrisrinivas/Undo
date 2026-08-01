@@ -51,9 +51,9 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "money_back",
     defect: "none",
     productCondition: "unopened_only",
-    remedyWindow: "7 days from delivery; request submitted",
+    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "self_ship",
-    buyerPaidFees: "none_stated",
+    reversalCost: { kind: "unstated" },
     materialConditions: ["Product must remain sealed and unopened."],
     quote: "returned for a refund within 7 days of delivery when sealed and unopened",
   },
@@ -62,9 +62,9 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "none",
     defect: "replacement",
     productCondition: "unclear",
-    remedyWindow: "7 days from delivery; report submitted",
+    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "unclear",
-    buyerPaidFees: "unclear",
+    reversalCost: { kind: "unclear" },
     materialConditions: ["Manufacturing defect must be verified."],
     quote: "manufacturing defect reported within 7 days ... eligible for replacement",
   },
@@ -73,9 +73,9 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "none",
     defect: "replacement",
     productCondition: "unclear",
-    remedyWindow: "7 days from delivery; request submitted",
+    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "doorstep_pickup",
-    buyerPaidFees: "none_stated",
+    reversalCost: { kind: "unstated" },
     materialConditions: ["Only damaged, defective, or wrong Products qualify."],
     quote: "7-day replacement policy for damaged, defective, or wrong products",
   },
@@ -91,6 +91,7 @@ const quotes: ReadonlyArray<CheckoutQuote> = [
 export function createFakeAdapters(options?: {
   readonly now?: string;
   readonly recordId?: string;
+  readonly failSenso?: boolean;
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
     sensoRequests: 0,
@@ -104,6 +105,9 @@ export function createFakeAdapters(options?: {
     senso: {
       retrieveEvidence() {
         activity.sensoRequests += 1;
+        if (options?.failSenso === true) {
+          return Promise.reject(new Error("deterministic Senso failure"));
+        }
         return Promise.resolve(evidence);
       },
     },
