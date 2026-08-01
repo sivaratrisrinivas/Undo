@@ -1,4 +1,5 @@
-import type { AssessedOffer, Offer, ReversibilityAssessment } from "../domain";
+import type { AssessedOffer, EvidenceSnapshot, Offer, PolicyAssessment, ReversibilityAssessment } from "../domain";
+import { EvidenceCard } from "./EvidenceCard";
 
 /** Renders the deterministic Remedy Ranking comparison. */
 export function ComparisonStage(props: {
@@ -45,15 +46,34 @@ export function EvidenceStage(props: { readonly assessment: ReversibilityAssessm
       <p className="stage-copy">Official merchant wording retrieved through Senso and reviewed by exact content fingerprint.</p>
       <div className="evidence-grid">
         {props.assessment.offers.map((offer) => (
-          <article className="evidence-card" key={offer.offer.id}>
-            <div className="evidence-header"><h3>{offer.evidence.merchant}</h3><span>{offer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"}</span></div>
-            <blockquote>“{offer.evidence.exactText}”</blockquote>
-            <dl><div><dt>Scope</dt><dd>{offer.evidence.scope.kind}: {offer.evidence.scope.value}</dd></div><div><dt>Collected</dt><dd>{new Date(offer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Review</dt><dd>{offer.evidenceReview.state === "reviewed" ? "Reviewed Evidence" : "Review required"}</dd></div><div><dt>Fingerprint</dt><dd>{offer.evidence.fingerprint}</dd></div></dl>
-            <a href={offer.evidence.sourceUrl}>{offer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a>
-          </article>
+          <EvidenceCard key={offer.offer.id} policy={offer.policy} reviewState={offer.evidenceReview.state} snapshot={offer.evidence} />
         ))}
       </div>
       <button className="primary-button" onClick={props.onContinue} type="button">Review approval summary <span aria-hidden="true">→</span></button>
+    </div>
+  );
+}
+
+/** Lets an authorized human reviewer approve the exact extracted facts and fingerprints. */
+export function EvidenceReviewStage(props: {
+  readonly candidates: ReadonlyArray<{
+    readonly snapshot: EvidenceSnapshot;
+    readonly policy: PolicyAssessment;
+  }>;
+  readonly loading: boolean;
+  readonly onApprove: () => void;
+}) {
+  return (
+    <div className="stage-card wide">
+      <p className="step-kicker">Human evidence review</p>
+      <h2>Review changed Policy Evidence</h2>
+      <p className="error-message" role="alert">Purchase Authorization is blocked until a human approves these exact fingerprints, extracted facts, and quotes.</p>
+      <div className="evidence-grid">
+        {props.candidates.map((candidate) => (
+          <EvidenceCard key={candidate.snapshot.fingerprint} policy={candidate.policy} reviewState="unreviewed" snapshot={candidate.snapshot} />
+        ))}
+      </div>
+      <button className="primary-button" disabled={props.loading} onClick={props.onApprove} type="button">{props.loading ? "Saving review…" : "Approve exact evidence and reassess"}</button>
     </div>
   );
 }

@@ -30,7 +30,7 @@ export type AssessmentAdapters = {
     ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>>;
     submitCheckout(offer: Offer, maximumTotalInr: number): Promise<AdapterResult<never>>;
   };
-  readonly evidence?: {
+  readonly evidence: {
     findReview(fingerprint: string): Promise<EvidenceReview | undefined>;
     saveReview(review: EvidenceReview): Promise<void>;
     loadCache(product: Product): Promise<ReviewedEvidenceCache | undefined>;
@@ -64,6 +64,10 @@ export type AssessmentFailure =
       readonly message: string;
       readonly reason: "purchase_unavailable" | "blocked_by_policy" | "blocked_by_price";
       readonly record?: UndoRecord;
+      readonly reviewCandidates?: ReadonlyArray<{
+        readonly snapshot: EvidenceSnapshot;
+        readonly policy: PolicyAssessment;
+      }>;
     };
 
 type AssessmentResult =
@@ -127,11 +131,11 @@ export class AssessmentWorkflow {
     snapshot: EvidenceSnapshot,
     policy: PolicyAssessment,
   ): Promise<EvidenceReview> {
-    if (this.adapters.evidence === undefined) {
-      throw new Error("Evidence review storage is not configured");
-    }
     if (snapshot.offerId !== policy.offerId) {
       throw new Error("Evidence and extracted policy must belong to the same Offer");
+    }
+    if (!this.hasCompleteCitations(snapshot, policy)) {
+      throw new Error("Every extracted policy fact needs an exact quote from its Evidence Snapshot");
     }
     const review: EvidenceReview = {
       fingerprint: snapshot.fingerprint,
@@ -169,7 +173,7 @@ export class AssessmentWorkflow {
     const usingCache = evidenceResult._tag === "err";
 
     if (evidenceResult._tag === "err") {
-      const cache = await this.adapters.evidence?.loadCache(product);
+      const cache = await this.adapters.evidence.loadCache(product);
       if (cache === undefined) {
         return this.policyBlock(
           product,
@@ -208,17 +212,14 @@ export class AssessmentWorkflow {
         };
       }
       policies = policiesResult.value;
-      reviews =
-        this.adapters.evidence === undefined
-          ? new Map<string, EvidenceReview>()
-          : new Map(
-              await Promise.all(
-                evidence.map(async (snapshot) => [
-                  snapshot.fingerprint,
-                  await this.adapters.evidence!.findReview(snapshot.fingerprint),
-                ] as const),
-              ),
-            );
+      reviews = new Map(
+        await Promise.all(
+          evidence.map(async (snapshot) => [
+            snapshot.fingerprint,
+            await this.adapters.evidence.findReview(snapshot.fingerprint),
+          ] as const),
+        ),
+      );
     }
 
     if (!this.hasCompleteEvidence(evidence)) {
@@ -230,43 +231,50 @@ export class AssessmentWorkflow {
         "Policy Evidence is incomplete for one or more Offers",
       );
     }
-    if (this.adapters.evidence !== undefined) {
-      const unreviewed = evidence.some(
-        (snapshot) =>
-          reviews.get(snapshot.fingerprint) === undefined ||
-          reviews.get(snapshot.fingerprint)?.policy.offerId !== snapshot.offerId,
+    const unreviewed = evidence.some(
+      (snapshot) => !this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint)),
+    );
+    if (unreviewed) {
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        destinationReference,
+        evidence,
+        "Policy Evidence changed and requires human review",
+        usingCache
+          ? undefined
+          : evidence.flatMap((snapshot) => {
+              const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
+              return policy === undefined ? [] : [{ snapshot, policy }];
+            }),
       );
-      if (unreviewed) {
-        return this.policyBlock(
-          product,
-          premiumLimitInr,
-          destinationReference,
-          evidence,
-          "Policy Evidence changed and requires human review",
-        );
-      }
+    }
 
-      const now = Date.parse(this.adapters.now());
-      const hasStaleEvidence = evidence.some(
-        (snapshot) => now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000,
+    const now = Date.parse(this.adapters.now());
+    const hasStaleEvidence = evidence.some(
+      (snapshot) => now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000,
+    );
+    if (hasStaleEvidence) {
+      const staleEvidence = evidence.map((snapshot) =>
+        now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000
+          ? { ...snapshot, retrievalState: "stale" as const }
+          : snapshot,
       );
-      if (hasStaleEvidence) {
-        return this.policyBlock(
-          product,
-          premiumLimitInr,
-          destinationReference,
-          evidence,
-          "Stale Evidence must be refreshed before purchase",
-        );
-      }
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        destinationReference,
+        staleEvidence,
+        "Stale Evidence must be refreshed before purchase",
+      );
+    }
 
-      policies = evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!.policy);
-      if (!usingCache) {
-        await this.adapters.evidence.saveCache({
-          snapshots: evidence,
-          reviews: evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!),
-        });
-      }
+    policies = evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!.policy);
+    if (!usingCache) {
+      await this.adapters.evidence.saveCache({
+        snapshots: evidence,
+        reviews: evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!),
+      });
     }
 
     const availableTotals = quotes
@@ -426,13 +434,63 @@ export class AssessmentWorkflow {
       return (
         snapshots.length === 1 &&
         snapshot !== undefined &&
-        snapshot.merchant.trim() !== "" &&
-        snapshot.sourceUrl.trim() !== "" &&
-        snapshot.scope.value.trim() !== "" &&
+        snapshot.merchant === offer.merchant &&
+        this.isOfficialSource(offer.id, snapshot.sourceUrl) &&
+        ((snapshot.scope.kind === "product" && snapshot.scope.value === "Sennheiser HD 560S") ||
+          (snapshot.scope.kind === "category" && snapshot.scope.value === "Headphones")) &&
         snapshot.exactText.trim() !== "" &&
         snapshot.fingerprint.trim() !== "" &&
         Number.isFinite(Date.parse(snapshot.collectedAt)) &&
         snapshot.retrievedVia === "senso"
+      );
+    });
+  }
+
+  private isOfficialSource(offerId: Offer["id"], sourceUrl: string): boolean {
+    try {
+      const hostname = new URL(sourceUrl).hostname.toLowerCase();
+      const officialHosts: Readonly<Record<Offer["id"], ReadonlyArray<string>>> = {
+        "headphone-zone": ["headphonezone.in", "www.headphonezone.in"],
+        "concept-kart": ["conceptkart.com", "www.conceptkart.com"],
+        flipkart: ["flipkart.com", "www.flipkart.com"],
+      };
+      return officialHosts[offerId].includes(hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  private isApplicableReview(
+    snapshot: EvidenceSnapshot,
+    review: EvidenceReview | undefined,
+  ): review is EvidenceReview {
+    return (
+      review !== undefined &&
+      review.policy.offerId === snapshot.offerId &&
+      this.hasCompleteCitations(snapshot, review.policy)
+    );
+  }
+
+  private hasCompleteCitations(
+    snapshot: EvidenceSnapshot,
+    policy: PolicyAssessment,
+  ): boolean {
+    const requiredFacts: ReadonlyArray<PolicyAssessment["citations"][number]["fact"]> = [
+      "remedy",
+      "window",
+      "product_condition",
+      "return_transport",
+      "buyer_paid_fees",
+    ];
+    return requiredFacts.every((fact) => {
+      const citations = policy.citations.filter((citation) => citation.fact === fact);
+      const citation = citations[0];
+      return (
+        citations.length === 1 &&
+        citation !== undefined &&
+        citation.sourceUrl === snapshot.sourceUrl &&
+        citation.quote.trim() !== "" &&
+        snapshot.exactText.includes(citation.quote)
       );
     });
   }
@@ -443,6 +501,10 @@ export class AssessmentWorkflow {
     destinationReference: string,
     evidence: ReadonlyArray<EvidenceSnapshot>,
     message: string,
+    reviewCandidates?: ReadonlyArray<{
+      readonly snapshot: EvidenceSnapshot;
+      readonly policy: PolicyAssessment;
+    }>,
   ): AssessmentResult {
     return {
       _tag: "err",
@@ -457,6 +519,7 @@ export class AssessmentWorkflow {
           evidence,
           message,
         ),
+        ...(reviewCandidates === undefined ? {} : { reviewCandidates }),
       },
     };
   }

@@ -24,6 +24,7 @@ const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) 
 }));
 
 function makePolicy(offerId: Offer["id"]): PolicyAssessment {
+  const sourceUrl = SUPPORTED_OFFERS.find((offer) => offer.id === offerId)?.url ?? "";
   return {
     offerId,
     changeOfMind: "money_back",
@@ -34,6 +35,13 @@ function makePolicy(offerId: Offer["id"]): PolicyAssessment {
     reversalCost: { kind: "known", amountInr: 100 },
     materialConditions: [],
     quote: "Deterministic ranking test evidence.",
+    citations: ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
+      (fact) => ({
+        fact: fact as PolicyAssessment["citations"][number]["fact"],
+        quote: "Deterministic ranking test evidence.",
+        sourceUrl,
+      }),
+    ),
   };
 }
 
@@ -41,6 +49,16 @@ function makeAdapters(
   policies: ReadonlyArray<PolicyAssessment>,
   quotes: ReadonlyArray<CheckoutQuote>,
 ): AssessmentAdapters {
+  const reviews = new Map(
+    snapshots.map((snapshot) => [
+      snapshot.fingerprint,
+      {
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T11:00:00.000Z",
+        policy: policies.find((policy) => policy.offerId === snapshot.offerId)!,
+      },
+    ]),
+  );
   return {
     senso: { retrieveEvidence: () => Promise.resolve({ _tag: "ok", value: snapshots }) },
     openAi: { extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }) },
@@ -51,6 +69,12 @@ function makeAdapters(
           _tag: "err",
           error: { _tag: "DependencyUnavailable", dependency: "prava", cause: "not used" },
         }),
+    },
+    evidence: {
+      findReview: (fingerprint) => Promise.resolve(reviews.get(fingerprint)),
+      saveReview: (review) => { reviews.set(review.fingerprint, review); return Promise.resolve(); },
+      loadCache: () => Promise.resolve(undefined),
+      saveCache: () => Promise.resolve(),
     },
     now: () => "2026-08-01T12:00:00.000Z",
     nextRecordId: () => "ranking-test",

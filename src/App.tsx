@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { ApprovalStage, ComparisonStage, EvidenceStage } from "./components/AssessmentStages";
+import { ApprovalStage, ComparisonStage, EvidenceReviewStage, EvidenceStage } from "./components/AssessmentStages";
 import { CheckoutStage, RecordStage } from "./components/DecisionStages";
 import { ConstraintsStage, ProductInputStage, type InputMode } from "./components/InputStages";
 import { StageProgress } from "./components/StageProgress";
@@ -8,6 +8,9 @@ import {
   parsePremiumLimitInr,
   resolveSupportedProduct,
   type AssessedOffer,
+  type EvidenceReview,
+  type EvidenceSnapshot,
+  type PolicyAssessment,
   type Product,
   type ReversibilityAssessment,
   type UndoRecord,
@@ -15,12 +18,13 @@ import {
 import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 import "./styles.css";
 
-type Stage = "product" | "constraints" | "comparison" | "evidence" | "approval" | "checkout" | "record";
+type Stage = "product" | "constraints" | "comparison" | "review" | "evidence" | "approval" | "checkout" | "record";
 
 const stageIndex: Readonly<Record<Stage, number>> = {
   product: 0,
   constraints: 1,
   comparison: 2,
+  review: 3,
   evidence: 3,
   approval: 4,
   checkout: 5,
@@ -40,6 +44,10 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
   const [assessment, setAssessment] = useState<ReversibilityAssessment>();
   const [selectedOffer, setSelectedOffer] = useState<AssessedOffer>();
   const [record, setRecord] = useState<UndoRecord>();
+  const [reviewCandidates, setReviewCandidates] = useState<ReadonlyArray<{
+    readonly snapshot: EvidenceSnapshot;
+    readonly policy: PolicyAssessment;
+  }>>([]);
   const [acknowledgedWarnings, setAcknowledgedWarnings] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -76,6 +84,11 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     if (result._tag === "err") {
       if (result.error._tag === "NoEligibleOffer" && result.error.record !== undefined) {
         setRecord(result.error.record);
+        if (result.error.reviewCandidates !== undefined) {
+          setReviewCandidates(result.error.reviewCandidates);
+          setStage("review");
+          return;
+        }
         setStage("record");
         return;
       }
@@ -87,6 +100,18 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
       result.value.ranking._tag === "winner" ? result.value.ranking.offer : undefined,
     );
     setStage("comparison");
+  }
+
+  async function approveEvidence() {
+    setLoading(true);
+    await Promise.all(
+      reviewCandidates.map((candidate): Promise<EvidenceReview> =>
+        workflow.approveEvidence(candidate.snapshot, candidate.policy),
+      ),
+    );
+    setReviewCandidates([]);
+    setLoading(false);
+    await compareOffers();
   }
 
   function declinePurchase() {
@@ -123,6 +148,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
           {stage === "product" && <ProductInputStage error={error} inputMode={inputMode} productName={productName} url={url} onInputModeChange={setInputMode} onProductNameChange={setProductName} onStart={startAssessment} onUrlChange={setUrl} />}
           {stage === "constraints" && product !== undefined && <ConstraintsStage destinationReference={destinationReference} error={error} loading={loading} premiumLimit={premiumLimit} onCompare={() => void compareOffers()} onDestinationChange={setDestinationReference} onPremiumLimitChange={setPremiumLimit} />}
           {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOfferId={selectedOffer?.offer.id} onContinue={() => setStage("evidence")} onSelect={setSelectedOffer} />}
+          {stage === "review" && <EvidenceReviewStage candidates={reviewCandidates} loading={loading} onApprove={() => void approveEvidence()} />}
           {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={() => setStage("approval")} />}
           {stage === "approval" && assessment !== undefined && selectedOffer !== undefined && <ApprovalStage assessment={assessment} selectedOffer={selectedOffer} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warning, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warning); else next.delete(warning); return next; })} onContinue={() => setStage("checkout")} />}
           {stage === "checkout" && selectedOffer !== undefined && <CheckoutStage selectedOffer={selectedOffer} onDecline={declinePurchase} />}

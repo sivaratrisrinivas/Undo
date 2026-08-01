@@ -2,9 +2,10 @@
   "compilerOptions": {
     "composite": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "Bundler"
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "src/domain.ts", "src/adapters/senso-evidence-server.ts"]
 }

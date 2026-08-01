@@ -35,7 +35,7 @@ npm run dev
 
 Open the local URL printed by Vite.
 
-The default mode expects `POST /api/policy-evidence`. Its request body contains only the supported Product identity. The backend must query the curated official sources through Senso and return:
+The Vite development server implements `POST /api/policy-evidence`. Its request body contains only the supported Product identity. The server queries Senso's `/org/search`, keeps only configured corpus content IDs, and returns:
 
 ```json
 {
@@ -52,7 +52,16 @@ The default mode expects `POST /api/policy-evidence`. Its request body contains 
 }
 ```
 
-Keep `SENSO_API_KEY` on that backend; never expose it through a `VITE_` variable. To run the deterministic local walking skeleton without the backend, use:
+Configure the server-only environment variables below. Each content-ID value is a comma-separated list of the official documents ingested into Senso for that merchant:
+
+```sh
+SENSO_API_KEY=...
+SENSO_HEADPHONE_ZONE_CONTENT_IDS=uuid-1,uuid-2
+SENSO_CONCEPT_KART_CONTENT_IDS=uuid-3,uuid-4
+SENSO_FLIPKART_CONTENT_IDS=uuid-5,uuid-6
+```
+
+Never expose the Senso key through a `VITE_` variable. A production host must route the same endpoint to `retrievePolicyEvidenceFromSenso`; Vite's middleware supplies it during local development. To run the deterministic local walking skeleton without Senso, use:
 
 ```sh
 VITE_EVIDENCE_MODE=fake npm run dev

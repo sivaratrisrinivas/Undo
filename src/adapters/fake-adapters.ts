@@ -58,6 +58,20 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
   },
 ];
 
+function citationsFor(
+  offerId: PolicyAssessment["offerId"],
+  quote: string,
+): PolicyAssessment["citations"] {
+  const sourceUrl = evidence.find((snapshot) => snapshot.offerId === offerId)?.sourceUrl ?? "";
+  return ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
+    (fact) => ({
+      fact: fact as PolicyAssessment["citations"][number]["fact"],
+      quote,
+      sourceUrl,
+    }),
+  );
+}
+
 const policies: ReadonlyArray<PolicyAssessment> = [
   {
     offerId: "headphone-zone",
@@ -68,7 +82,12 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     returnTransport: "self_ship",
     reversalCost: { kind: "unstated" },
     materialConditions: ["Product must remain sealed and unopened."],
-    quote: "returned for a refund within 7 days of delivery when sealed and unopened",
+    quote:
+      "Eligible products may be returned for a refund within 7 days of delivery when sealed and unopened in the original packaging.",
+    citations: citationsFor(
+      "headphone-zone",
+      "Eligible products may be returned for a refund within 7 days of delivery when sealed and unopened in the original packaging.",
+    ),
   },
   {
     offerId: "concept-kart",
@@ -79,7 +98,12 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     returnTransport: "unclear",
     reversalCost: { kind: "unclear" },
     materialConditions: ["Manufacturing defect must be verified."],
-    quote: "manufacturing defect reported within 7 days ... eligible for replacement",
+    quote:
+      "A manufacturing defect reported within 7 days of delivery is eligible for replacement after verification.",
+    citations: citationsFor(
+      "concept-kart",
+      "A manufacturing defect reported within 7 days of delivery is eligible for replacement after verification.",
+    ),
   },
   {
     offerId: "flipkart",
@@ -90,7 +114,12 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     returnTransport: "doorstep_pickup",
     reversalCost: { kind: "unstated" },
     materialConditions: ["Only damaged, defective, or wrong Products qualify."],
-    quote: "7-day replacement policy for damaged, defective, or wrong products",
+    quote:
+      "This category has a 7-day replacement policy for damaged, defective, or wrong products.",
+    citations: citationsFor(
+      "flipkart",
+      "This category has a 7-day replacement policy for damaged, defective, or wrong products.",
+    ),
   },
 ];
 
@@ -107,6 +136,7 @@ export function createFakeAdapters(options?: {
   readonly failSenso?: boolean;
   readonly failOpenAi?: boolean;
   readonly failPravaQuote?: boolean;
+  readonly unreviewed?: boolean;
   readonly scenario?: "default" | "exchange" | "tied";
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
@@ -150,7 +180,7 @@ export function createFakeAdapters(options?: {
           )
         : policies;
   const reviewByFingerprint = new Map(
-    evidence.map((snapshot, index) => [
+    (options?.unreviewed === true ? [] : evidence).map((snapshot, index) => [
       snapshot.fingerprint,
       {
         fingerprint: snapshot.fingerprint,

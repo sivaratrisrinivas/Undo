@@ -1,5 +1,6 @@
-import type { EvidenceReview, ReviewedEvidenceCache } from "../domain";
+import type { EvidenceReview, EvidenceSnapshot, PolicyAssessment, ReviewedEvidenceCache } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
+import { fingerprintEvidenceText } from "./senso-evidence";
 
 const reviewsKey = "undo.evidence-reviews.v1";
 const cacheKey = "undo.reviewed-evidence-cache.v1";
@@ -16,7 +17,72 @@ function readJson(storage: Storage, key: string): unknown {
 
 function readReviews(storage: Storage): ReadonlyArray<EvidenceReview> {
   const value = readJson(storage, reviewsKey);
-  return Array.isArray(value) ? (value as ReadonlyArray<EvidenceReview>) : [];
+  return Array.isArray(value) ? value.filter(isReview) : [];
+}
+
+function isSnapshot(value: unknown): value is EvidenceSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const snapshot = value as Record<string, unknown>;
+  const scope = snapshot.scope as Record<string, unknown> | undefined;
+  return (
+    typeof snapshot.offerId === "string" &&
+    typeof snapshot.merchant === "string" &&
+    typeof snapshot.sourceUrl === "string" &&
+    typeof snapshot.collectedAt === "string" &&
+    typeof snapshot.exactText === "string" &&
+    typeof snapshot.fingerprint === "string" &&
+    snapshot.retrievedVia === "senso" &&
+    (snapshot.retrievalState === "current" || snapshot.retrievalState === "cached") &&
+    typeof scope === "object" &&
+    scope !== null &&
+    (scope.kind === "product" || scope.kind === "category") &&
+    typeof scope.value === "string"
+  );
+}
+
+function isPolicy(value: unknown): value is PolicyAssessment {
+  if (typeof value !== "object" || value === null) return false;
+  const policy = value as Record<string, unknown>;
+  const window = policy.remedyWindow as Record<string, unknown> | undefined;
+  const cost = policy.reversalCost as Record<string, unknown> | undefined;
+  return (
+    typeof policy.offerId === "string" &&
+    ["money_back", "store_credit", "none"].includes(String(policy.changeOfMind)) &&
+    ["replacement", "none"].includes(String(policy.defect)) &&
+    ["unopened_only", "opened_unused", "trial_allowed", "unclear"].includes(String(policy.productCondition)) &&
+    ["doorstep_pickup", "self_ship", "unclear"].includes(String(policy.returnTransport)) &&
+    Array.isArray(policy.materialConditions) &&
+    policy.materialConditions.every((condition) => typeof condition === "string") &&
+    typeof policy.quote === "string" &&
+    Array.isArray(policy.citations) &&
+    policy.citations.every((citation) => {
+      if (typeof citation !== "object" || citation === null) return false;
+      const entry = citation as Record<string, unknown>;
+      return (
+        ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].includes(String(entry.fact)) &&
+        typeof entry.quote === "string" &&
+        typeof entry.sourceUrl === "string"
+      );
+    }) &&
+    typeof window === "object" &&
+    window !== null &&
+    typeof window.days === "number" &&
+    window.startsAt === "delivered" &&
+    window.requiredAction === "request_submitted" &&
+    typeof cost === "object" &&
+    cost !== null &&
+    ["explicit_none", "known", "unstated", "unpriced_required", "unclear"].includes(String(cost.kind))
+  );
+}
+
+function isReview(value: unknown): value is EvidenceReview {
+  if (typeof value !== "object" || value === null) return false;
+  const review = value as Record<string, unknown>;
+  return (
+    typeof review.fingerprint === "string" &&
+    typeof review.approvedAt === "string" &&
+    isPolicy(review.policy)
+  );
 }
 
 /** Persists exact-fingerprint human reviews and the most recent complete cache in the browser. */
@@ -34,13 +100,26 @@ export function createBrowserEvidenceRepository(
       storage.setItem(reviewsKey, JSON.stringify([...reviews, review]));
       return Promise.resolve();
     },
-    loadCache() {
-      const cache = readJson(storage, cacheKey);
-      return Promise.resolve(
-        typeof cache === "object" && cache !== null
-          ? (cache as ReviewedEvidenceCache)
-          : undefined,
+    async loadCache() {
+      const value = readJson(storage, cacheKey);
+      if (typeof value !== "object" || value === null) return undefined;
+      const candidate = value as { snapshots?: unknown; reviews?: unknown };
+      if (
+        !Array.isArray(candidate.snapshots) ||
+        !candidate.snapshots.every(isSnapshot) ||
+        !Array.isArray(candidate.reviews) ||
+        !candidate.reviews.every(isReview)
+      ) {
+        return undefined;
+      }
+      const fingerprintsMatch = await Promise.all(
+        candidate.snapshots.map(async (snapshot) =>
+          (await fingerprintEvidenceText(snapshot.exactText)) === snapshot.fingerprint,
+        ),
       );
+      return fingerprintsMatch.every(Boolean)
+        ? { snapshots: candidate.snapshots, reviews: candidate.reviews }
+        : undefined;
     },
     saveCache(cache) {
       storage.setItem(cacheKey, JSON.stringify(cache));

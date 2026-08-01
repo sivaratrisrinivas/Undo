@@ -36,6 +36,16 @@ export type PolicyAssessment = {
     | { readonly kind: "unclear" };
   readonly materialConditions: ReadonlyArray<string>;
   readonly quote: string;
+  readonly citations: ReadonlyArray<{
+    readonly fact:
+      | "remedy"
+      | "window"
+      | "product_condition"
+      | "return_transport"
+      | "buyer_paid_fees";
+    readonly quote: string;
+    readonly sourceUrl: string;
+  }>;
 };
 
 /** Dated official merchant text collected for an Offer. */
@@ -51,7 +61,7 @@ export type EvidenceSnapshot = {
   readonly exactText: string;
   readonly fingerprint: string;
   readonly retrievedVia: "senso";
-  readonly retrievalState: "current" | "cached";
+  readonly retrievalState: "current" | "cached" | "stale";
 };
 
 /** Human approval of extracted facts for one exact content fingerprint. */

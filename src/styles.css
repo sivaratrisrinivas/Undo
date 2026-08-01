@@ -96,6 +96,11 @@ dl { margin: 0; }
 dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
 dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .evidence-card a { display: inline-block; margin-top: 1rem; color: var(--blue); font-weight: 750; }
+.evidence-facts { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.evidence-fact { margin-top: 1rem; }
+.evidence-fact strong { text-transform: capitalize; }
+.evidence-fact blockquote { margin-block: .5rem; font-size: .9rem; }
+.evidence-fact a, .evidence-fact small { display: block; margin-top: .4rem; overflow-wrap: anywhere; }
 .policy-citation { margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--line); background: var(--surface-raised); }
 .policy-citation a, .policy-citation small { display: block; margin-top: .75rem; overflow-wrap: anywhere; }
 .policy-citation a { color: var(--blue); font-weight: 750; }

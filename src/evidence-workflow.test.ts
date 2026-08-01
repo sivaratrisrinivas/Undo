@@ -16,6 +16,7 @@ import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 const collectedAt = "2026-08-02T08:00:00.000Z";
 
 function policyFor(offerId: Offer["id"]): PolicyAssessment {
+  const sourceUrl = `${SUPPORTED_OFFERS.find((offer) => offer.id === offerId)?.url ?? ""}/returns`;
   return {
     offerId,
     changeOfMind: "money_back",
@@ -26,6 +27,13 @@ function policyFor(offerId: Offer["id"]): PolicyAssessment {
     reversalCost: { kind: "known", amountInr: 100 },
     materialConditions: [],
     quote: "Returns are accepted within 7 days of delivery.",
+    citations: ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
+      (fact) => ({
+        fact: fact as PolicyAssessment["citations"][number]["fact"],
+        quote: "Returns are accepted within 7 days of delivery.",
+        sourceUrl,
+      }),
+    ),
   };
 }
 
@@ -194,6 +202,9 @@ describe("Policy Evidence workflow", () => {
         record: { outcome: "blocked_by_policy" },
       },
     });
+    if (result._tag === "err" && result.error._tag === "NoEligibleOffer") {
+      expect(result.error.record?.evidence.every((snapshot) => snapshot.retrievalState === "stale")).toBe(true);
+    }
   });
 
   it("uses a fresh complete Reviewed Evidence cache during a Senso outage", async () => {
@@ -284,5 +295,46 @@ describe("Policy Evidence workflow", () => {
     if (result._tag === "ok") {
       expect(result.value.offers[0]?.evidenceReview).toEqual({ state: "reviewed", reused: true });
     }
+  });
+
+  it("refuses human approval when the supporting quote is not exact snapshot text", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const workflow = new AssessmentWorkflow(adapters(snapshots, policies, []));
+
+    await expect(
+      workflow.approveEvidence(snapshots[0]!, {
+        ...policies[0]!,
+        citations: policies[0]!.citations.map((citation, index) =>
+          index === 0
+            ? { ...citation, quote: "A claim that the official wording does not support." }
+            : citation,
+        ),
+      }),
+    ).rejects.toThrow("Every extracted policy fact needs an exact quote");
+  });
+
+  it("blocks evidence whose merchant provenance does not match its Offer", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const mismatched = snapshots.map((snapshot) =>
+      snapshot.offerId === "headphone-zone"
+        ? { ...snapshot, merchant: "Different Merchant" }
+        : snapshot,
+    );
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+
+    const result = await new AssessmentWorkflow(adapters(mismatched, policies, [])).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        message: "Policy Evidence is incomplete for one or more Offers",
+        reason: "blocked_by_policy",
+      },
+    });
   });
 });
