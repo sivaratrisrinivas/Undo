@@ -6,6 +6,7 @@ import { createFakeAdapters } from "./adapters/fake-adapters";
 import { createOpenAiPolicyExtractionAdapter } from "./adapters/openai-policy-extraction";
 import { createSensoEvidenceAdapter } from "./adapters/senso-evidence";
 import { App } from "./App";
+import { POLICY_CONTRACT_RELEASE } from "./evaluation/policy-contract";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -18,6 +19,7 @@ const adapters =
     ? baseAdapters
     : {
         ...baseAdapters,
+        policyContract: { purchaseEnabled: () => POLICY_CONTRACT_RELEASE.purchaseEnabled },
         senso: createSensoEvidenceAdapter(),
         openAi: createOpenAiPolicyExtractionAdapter(),
         evidence: createBrowserEvidenceRepository(localStorage),

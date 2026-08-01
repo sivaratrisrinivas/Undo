@@ -2,11 +2,10 @@
 
 ## Policy extraction gold set
 
-The executable frozen contract is in `src/evaluation/frozen-policy-answer-key.ts` and is scored by
-`npm run test:policy-contract`. Each of its 75 field instances passes only when the complete value,
-nested facts, source reference, and exact supporting quote pass together. The scorer separately
-enforces correct abstention, absence of unsupported return claims, and 100% field/citation
-correctness for the three demo Offers before its purchase gate opens.
+The executable synthetic scorer fixtures are in `src/evaluation/frozen-policy-answer-key.ts` and are
+checked by `npm run test:policy-contract`. They verify all-or-nothing scoring, abstention, unsupported
+claims, and demo citation rules. They are not merchant documents, human review, or model outputs, and
+therefore cannot open the production purchase gate.
 
 Before prompt tuning, a human reviewer freezes an answer key for the 15-document official evidence corpus. For every applicable policy fact, the answer key records:
 
@@ -16,6 +15,9 @@ Before prompt tuning, a human reviewer freezes an answer key for the 15-document
 - cases expected to return `unclear`.
 
 Prompt changes are evaluated against this fixed answer key. The expected answers are not changed merely because a model output disagrees.
+
+The official corpus and independently recorded model outputs have not yet been supplied. Until they
+are reviewed and pass, `POLICY_CONTRACT_RELEASE.purchaseEnabled` remains `false`.
 
 Each field instance passes only when its value, every required nested fact, exact source quote, and source reference match the answer key without adding an unsupported claim. A partially correct field counts as incorrect. Extraction accuracy is calculated across all applicable field instances in the 15-document corpus.
 

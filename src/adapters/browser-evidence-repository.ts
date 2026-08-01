@@ -1,4 +1,4 @@
-import type { EvidenceReview, EvidenceSnapshot, PolicyAssessment } from "../domain";
+import { POLICY_FACTS, type EvidenceReview, type EvidenceSnapshot, type PolicyAssessment } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
 import { fingerprintEvidenceText } from "./senso-evidence";
 
@@ -22,7 +22,9 @@ function readReviews(storage: Storage): ReadonlyArray<EvidenceReview> {
 
 function isSnapshot(value: unknown): value is EvidenceSnapshot {
   if (typeof value !== "object" || value === null) return false;
+  // SAFETY: The object/null check above establishes a record for property-by-property validation.
   const snapshot = value as Record<string, unknown>;
+  // SAFETY: scope remains unknown in substance and is fully validated below.
   const scope = snapshot.scope as Record<string, unknown> | undefined;
   return (
     typeof snapshot.offerId === "string" &&
@@ -42,7 +44,9 @@ function isSnapshot(value: unknown): value is EvidenceSnapshot {
 
 function isPolicy(value: unknown): value is PolicyAssessment {
   if (typeof value !== "object" || value === null) return false;
+  // SAFETY: The object/null check above establishes a record for property-by-property validation.
   const policy = value as Record<string, unknown>;
+  // SAFETY: Nested records remain unknown in substance and are fully validated below.
   const window = policy.remedyWindow as Record<string, unknown> | undefined;
   const cost = policy.reversalCost as Record<string, unknown> | undefined;
   return (
@@ -54,7 +58,9 @@ function isPolicy(value: unknown): value is PolicyAssessment {
     Array.isArray(policy.materialConditions) &&
     policy.materialConditions.every((condition) => {
       if (typeof condition !== "object" || condition === null) return false;
+      // SAFETY: The object/null check above establishes a record for validation.
       const entry = condition as Record<string, unknown>;
+      // SAFETY: citation remains unknown in substance and is fully validated below.
       const citation = entry.citation as Record<string, unknown> | undefined;
       return (
         typeof entry.detail === "string" &&
@@ -67,10 +73,12 @@ function isPolicy(value: unknown): value is PolicyAssessment {
     Array.isArray(policy.supplementaryRemedies) &&
     policy.supplementaryRemedies.every((remedy) => {
       if (typeof remedy !== "object" || remedy === null) return false;
+      // SAFETY: The object/null check above establishes a record for validation.
       const entry = remedy as Record<string, unknown>;
+      // SAFETY: citation remains unknown in substance and is fully validated below.
       const citation = entry.citation as Record<string, unknown> | undefined;
       return (
-        ["warranty", "pre_dispatch_cancellation", "refund_processing_timing"].includes(
+        ["warranty", "replacement", "pre_dispatch_cancellation", "refund_processing_timing"].includes(
           String(entry.kind),
         ) &&
         typeof entry.detail === "string" &&
@@ -86,15 +94,17 @@ function isPolicy(value: unknown): value is PolicyAssessment {
     new Set(
       policy.citations.map((citation) =>
         typeof citation === "object" && citation !== null
+          // SAFETY: The object/null check establishes a record used only to read an unknown fact.
           ? String((citation as Record<string, unknown>).fact)
           : "",
       ),
     ).size === 5 &&
     policy.citations.every((citation) => {
       if (typeof citation !== "object" || citation === null) return false;
+      // SAFETY: The object/null check above establishes a record for validation.
       const entry = citation as Record<string, unknown>;
       return (
-        ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].includes(String(entry.fact)) &&
+        POLICY_FACTS.some((fact) => fact === entry.fact) &&
         typeof entry.quote === "string" &&
         typeof entry.sourceUrl === "string"
       );
@@ -108,18 +118,19 @@ function isPolicy(value: unknown): value is PolicyAssessment {
         String(window.requiredAction),
       )) ||
       (window.kind === "unclear" &&
-        window.days === null &&
-        window.startsAt === null &&
-        window.requiredAction === null)) &&
+        (window.days === undefined || window.days === null) &&
+        (window.startsAt === undefined || window.startsAt === null) &&
+        (window.requiredAction === undefined || window.requiredAction === null))) &&
     typeof cost === "object" &&
     cost !== null &&
-    ["explicit_none", "known", "none_stated", "unpriced_required", "unclear"].includes(String(cost.kind)) &&
+    ["explicit_none", "known", "unstated", "unpriced_required", "unclear"].includes(String(cost.kind)) &&
     (cost.kind === "known" ? typeof cost.amountInr === "number" : cost.amountInr === undefined)
   );
 }
 
 function isReview(value: unknown): value is EvidenceReview {
   if (typeof value !== "object" || value === null) return false;
+  // SAFETY: The object/null check above establishes a record for validation.
   const review = value as Record<string, unknown>;
   return (
     typeof review.fingerprint === "string" &&
@@ -146,6 +157,7 @@ export function createBrowserEvidenceRepository(
     async loadCache() {
       const value = readJson(storage, cacheKey);
       if (typeof value !== "object" || value === null) return undefined;
+      // SAFETY: The object/null check establishes a record whose fields are validated below.
       const candidate = value as { snapshots?: unknown; reviews?: unknown };
       if (
         !Array.isArray(candidate.snapshots) ||

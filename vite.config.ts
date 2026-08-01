@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 import { retrievePolicyEvidenceFromSenso, type SensoOfficialSource } from "./src/adapters/senso-evidence-server.ts";
 import {
   extractPoliciesWithOpenAi,
+  openAiApiKeyFrom,
   parsePolicyEvidenceInput,
 } from "./src/adapters/openai-policy-extraction-server.ts";
 import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_PRODUCT, type Product } from "./src/domain.ts";
@@ -58,7 +59,7 @@ function sensoEvidencePlugin(env: Record<string, string>): Plugin {
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
         request.on("end", () => {
-          void (async () => {
+          const handleRequest = async () => {
             try {
               if (body.length > 1_000_000) throw new Error("Request is too large");
               const payload: unknown = JSON.parse(body);
@@ -75,7 +76,12 @@ function sensoEvidencePlugin(env: Record<string, string>): Plugin {
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Policy evidence unavailable" }));
             }
-          })();
+          };
+          handleRequest().catch((cause: unknown) => {
+            response.statusCode = cause instanceof Error ? 503 : 500;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ error: "Policy evidence unavailable" }));
+          });
         });
       });
     },
@@ -83,6 +89,7 @@ function sensoEvidencePlugin(env: Record<string, string>): Plugin {
 }
 
 function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
+  const apiKey = openAiApiKeyFrom(env.OPENAI_API_KEY);
   return {
     name: "undo-openai-policy-extraction",
     configureServer(server) {
@@ -92,28 +99,47 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
           return;
         }
         let body = "";
+        const abortController = new AbortController();
+        request.on("aborted", () => abortController.abort());
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
         request.on("end", () => {
-          void (async () => {
-            try {
-              if (body.length > 1_000_000) throw new Error("Request is too large");
-              const payload: unknown = JSON.parse(body);
-              const evidence = parsePolicyEvidenceInput(boundaryRecord(payload).evidence);
-              const model = env.OPENAI_POLICY_MODEL || "gpt-5.6";
-              const policies = await extractPoliciesWithOpenAi(evidence, {
-                apiKey: env.OPENAI_API_KEY ?? "",
-                model,
-              });
-              response.statusCode = 200;
-              response.setHeader("Content-Type", "application/json");
-              response.end(JSON.stringify({ policies, model }));
-            } catch {
-              response.statusCode = 503;
-              response.setHeader("Content-Type", "application/json");
-              response.end(JSON.stringify({ error: "Policy extraction unavailable" }));
+          const handleRequest = async () => {
+            if (body.length > 1_000_000) {
+              response.statusCode = 413;
+              response.end(JSON.stringify({ error: "Request is too large" }));
+              return;
             }
-          })();
+            let evidence;
+            try {
+              const payload: unknown = JSON.parse(body);
+              evidence = parsePolicyEvidenceInput(boundaryRecord(payload).evidence);
+            } catch (cause: unknown) {
+              response.statusCode = cause instanceof SyntaxError ? 400 : 422;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: "Invalid Policy Evidence request" }));
+              return;
+            }
+            const model = env.OPENAI_POLICY_MODEL || "gpt-5.6";
+            const result = await extractPoliciesWithOpenAi(evidence, {
+              apiKey,
+              model,
+              signal: abortController.signal,
+            });
+            response.setHeader("Content-Type", "application/json");
+            if (result._tag === "err") {
+              response.statusCode = 503;
+              response.end(JSON.stringify({ error: "Policy extraction unavailable" }));
+              return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ policies: result.value, model }));
+          };
+          handleRequest().catch((cause: unknown) => {
+            response.statusCode = cause instanceof Error ? 503 : 500;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ error: "Policy extraction unavailable" }));
+          });
         });
       });
     },

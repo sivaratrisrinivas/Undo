@@ -1,24 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import { FROZEN_POLICY_ANSWER_KEY } from "./frozen-policy-answer-key";
-import { scorePolicyExtractionContract } from "./policy-contract";
+import { POLICY_CONTRACT_RELEASE, scorePolicyExtractionContract } from "./policy-contract";
 
 describe("15-document policy extraction contract", () => {
-  it("opens the release gate only at 95% overall with perfect demo fields and citations", () => {
-    const recordedHumanReviewedExtractions = FROZEN_POLICY_ANSWER_KEY.map((entry) => ({
+  it("proves the scorer accepts a matching synthetic baseline without opening production", () => {
+    const answerKeyBaseline = FROZEN_POLICY_ANSWER_KEY.map((entry) => ({
       documentId: entry.documentId,
       policy: entry.expected,
     }));
 
-    expect(scorePolicyExtractionContract(FROZEN_POLICY_ANSWER_KEY, recordedHumanReviewedExtractions)).toEqual({
+    expect(scorePolicyExtractionContract(FROZEN_POLICY_ANSWER_KEY, answerKeyBaseline)).toEqual({
       passedFields: 75,
       totalFields: 75,
       accuracy: 1,
       correctAbstention: true,
       noUnsupportedReturnClaims: true,
       demoFieldsAndCitationsCorrect: true,
-      purchaseEnabled: true,
+      meetsAccuracyThreshold: true,
     });
+    expect(POLICY_CONTRACT_RELEASE).toEqual({ corpus: "synthetic", purchaseEnabled: false });
   });
 
   it("keeps purchase blocked for one wrong demo citation even above 95% overall", () => {
@@ -41,7 +42,7 @@ describe("15-document policy extraction contract", () => {
       passedFields: 74,
       accuracy: 74 / 75,
       demoFieldsAndCitationsCorrect: false,
-      purchaseEnabled: false,
+      meetsAccuracyThreshold: false,
     });
   });
 
@@ -57,7 +58,7 @@ describe("15-document policy extraction contract", () => {
     expect(scorePolicyExtractionContract(FROZEN_POLICY_ANSWER_KEY, extractions)).toMatchObject({
       correctAbstention: false,
       noUnsupportedReturnClaims: false,
-      purchaseEnabled: false,
+      meetsAccuracyThreshold: false,
     });
   });
 });

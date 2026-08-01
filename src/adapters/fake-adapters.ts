@@ -4,6 +4,7 @@ import type {
   PolicyAssessment,
   ReviewedEvidenceCache,
 } from "../domain";
+import { POLICY_FACTS } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
 
 /** Observable counters exposed by the deterministic fake boundary. */
@@ -63,13 +64,23 @@ function citationsFor(
   quote: string,
 ): PolicyAssessment["citations"] {
   const sourceUrl = evidence.find((snapshot) => snapshot.offerId === offerId)?.sourceUrl ?? "";
-  return ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
+  return POLICY_FACTS.map(
     (fact) => ({
-      fact: fact as PolicyAssessment["citations"][number]["fact"],
+      fact,
       quote,
       sourceUrl,
     }),
   );
+}
+
+function sourceUrlFor(offerId: PolicyAssessment["offerId"]): string {
+  return evidence.find((snapshot) => snapshot.offerId === offerId)?.sourceUrl ?? "";
+}
+
+function policyAt(items: ReadonlyArray<PolicyAssessment>, index: number): PolicyAssessment {
+  const policy = items[index];
+  if (policy === undefined) throw new Error(`Fake policy fixture is missing index ${index}`);
+  return policy;
 }
 
 const policies: ReadonlyArray<PolicyAssessment> = [
@@ -80,13 +91,13 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     productCondition: "unopened_only",
     remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "self_ship",
-    reversalCost: { kind: "none_stated" },
+    reversalCost: { kind: "unstated" },
     materialConditions: [
       {
         detail: "Product must remain sealed and unopened.",
         citation: {
           quote: "sealed and unopened in the original packaging",
-          sourceUrl: evidence[0]!.sourceUrl,
+          sourceUrl: sourceUrlFor("headphone-zone"),
         },
       },
     ],
@@ -109,10 +120,17 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     materialConditions: [
       {
         detail: "Manufacturing defect must be verified.",
-        citation: { quote: "after verification", sourceUrl: evidence[1]!.sourceUrl },
+        citation: { quote: "after verification", sourceUrl: sourceUrlFor("concept-kart") },
       },
     ],
-    supplementaryRemedies: [],
+    supplementaryRemedies: [{
+      kind: "replacement",
+      detail: "Manufacturing defects may be replaced after verification.",
+      citation: {
+        quote: "eligible for replacement after verification",
+        sourceUrl: sourceUrlFor("concept-kart"),
+      },
+    }],
     quote:
       "A manufacturing defect reported within 7 days of delivery is eligible for replacement after verification.",
     citations: citationsFor(
@@ -127,17 +145,24 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     productCondition: "unclear",
     remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "doorstep_pickup",
-    reversalCost: { kind: "none_stated" },
+    reversalCost: { kind: "unstated" },
     materialConditions: [
       {
         detail: "Only damaged, defective, or wrong Products qualify.",
         citation: {
           quote: "damaged, defective, or wrong products",
-          sourceUrl: evidence[2]!.sourceUrl,
+          sourceUrl: sourceUrlFor("flipkart"),
         },
       },
     ],
-    supplementaryRemedies: [],
+    supplementaryRemedies: [{
+      kind: "replacement",
+      detail: "Damaged, defective, or wrong Products may be replaced.",
+      citation: {
+        quote: "replacement policy for damaged, defective, or wrong products",
+        sourceUrl: sourceUrlFor("flipkart"),
+      },
+    }],
     quote:
       "This category has a 7-day replacement policy for damaged, defective, or wrong products.",
     citations: citationsFor(
@@ -198,7 +223,7 @@ export function createFakeAdapters(options?: {
                   defect: "none" as const,
                   productCondition: "unopened_only" as const,
                   returnTransport: "self_ship" as const,
-                  reversalCost: { kind: "none_stated" as const },
+                  reversalCost: { kind: "unstated" as const },
                   materialConditions: [],
                 }
               : policy,
@@ -210,7 +235,7 @@ export function createFakeAdapters(options?: {
       {
         fingerprint: snapshot.fingerprint,
         approvedAt: "2026-08-01T11:00:00.000Z",
-        policy: scenarioPolicies()[index]!,
+        policy: policyAt(scenarioPolicies(), index),
       },
     ]),
   );
@@ -218,6 +243,7 @@ export function createFakeAdapters(options?: {
 
   return {
     activity,
+    policyContract: { purchaseEnabled: () => true },
     senso: {
       retrieveEvidence() {
         activity.sensoRequests += 1;

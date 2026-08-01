@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EvidenceSnapshot, PolicyAssessment } from "../domain";
 import { createOpenAiPolicyExtractionAdapter } from "./openai-policy-extraction";
 
-const evidence: ReadonlyArray<EvidenceSnapshot> = [
-  {
+const evidenceSnapshot: EvidenceSnapshot = {
     offerId: "headphone-zone",
     merchant: "Headphone Zone",
     sourceUrl: "https://merchant.example/policy",
@@ -14,22 +13,17 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
     fingerprint: "sha256:test",
     retrievedVia: "senso",
     retrievalState: "current",
-  },
-];
+};
+const evidence: ReadonlyArray<EvidenceSnapshot> = [evidenceSnapshot];
 
 const policy = {
   offerId: "headphone-zone",
   changeOfMind: "unclear",
   defect: "none",
-  remedyWindow: {
-    kind: "unclear",
-    days: null,
-    startsAt: null,
-    requiredAction: null,
-  },
+  remedyWindow: { kind: "unclear" },
   productCondition: "unclear",
   returnTransport: "unclear",
-  reversalCost: { kind: "none_stated" },
+  reversalCost: { kind: "unstated" },
   materialConditions: [],
   supplementaryRemedies: [],
   quote: "Returns are allowed within seven days.",
@@ -41,8 +35,8 @@ const policy = {
     "buyer_paid_fees",
   ].map((fact) => ({
     fact: fact as PolicyAssessment["citations"][number]["fact"],
-    quote: evidence[0]!.exactText,
-    sourceUrl: evidence[0]!.sourceUrl,
+    quote: evidenceSnapshot.exactText,
+    sourceUrl: evidenceSnapshot.sourceUrl,
   })),
 } as const satisfies PolicyAssessment;
 

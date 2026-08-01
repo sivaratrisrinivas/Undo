@@ -1,9 +1,9 @@
-import type { EvidenceSnapshot, PolicyAssessment } from "../domain";
+import { POLICY_FACTS, type EvidenceSnapshot, type PolicyAssessment, type PolicyFact } from "../domain";
 
 /** One scored field in the five-field extraction contract. */
-export type PolicyField = PolicyAssessment["citations"][number]["fact"];
+export type PolicyField = PolicyFact;
 
-/** One frozen document, its provenance, and its human-reviewed expected extraction. */
+/** One synthetic scorer fixture and its expected extraction. */
 export type PolicyAnswerKeyEntry = {
   readonly documentId: string;
   readonly demoOffer: boolean;
@@ -25,7 +25,19 @@ export type PolicyContractScore = {
   readonly correctAbstention: boolean;
   readonly noUnsupportedReturnClaims: boolean;
   readonly demoFieldsAndCitationsCorrect: boolean;
+  readonly meetsAccuracyThreshold: boolean;
+};
+
+/** Provenance and authorization decision for the deployed extraction contract. */
+export type PolicyContractRelease = {
+  readonly corpus: "synthetic" | "human_reviewed_official";
   readonly purchaseEnabled: boolean;
+};
+
+/** Production remains closed until independent model outputs pass an official human-reviewed corpus. */
+export const POLICY_CONTRACT_RELEASE: PolicyContractRelease = {
+  corpus: "synthetic",
+  purchaseEnabled: false,
 };
 
 function citation(policy: PolicyAssessment, fact: PolicyField) {
@@ -68,6 +80,7 @@ function expectsAbstention(entry: PolicyAnswerKeyEntry, fact: PolicyField): bool
   const value = fieldValue(entry.expected, fact);
   if (typeof value === "string") return value === "unclear";
   if (typeof value !== "object" || value === null) return false;
+  // SAFETY: The object/null checks establish a record for discriminant inspection only.
   const record = value as Record<string, unknown>;
   return record.kind === "unclear" || record.changeOfMind === "unclear" || record.defect === "unclear";
 }
@@ -77,13 +90,7 @@ export function scorePolicyExtractionContract(
   answerKey: ReadonlyArray<PolicyAnswerKeyEntry>,
   extractions: ReadonlyArray<PolicyContractExtraction>,
 ): PolicyContractScore {
-  const facts: ReadonlyArray<PolicyField> = [
-    "remedy",
-    "window",
-    "product_condition",
-    "return_transport",
-    "buyer_paid_fees",
-  ];
+  const facts: ReadonlyArray<PolicyField> = POLICY_FACTS;
   const extractionByDocument = new Map(
     extractions.map((extraction) => [extraction.documentId, extraction.policy]),
   );
@@ -119,7 +126,7 @@ export function scorePolicyExtractionContract(
     correctAbstention,
     noUnsupportedReturnClaims,
     demoFieldsAndCitationsCorrect,
-    purchaseEnabled:
+    meetsAccuracyThreshold:
       accuracy >= 0.95 &&
       correctAbstention &&
       noUnsupportedReturnClaims &&

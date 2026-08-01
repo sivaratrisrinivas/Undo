@@ -24,7 +24,7 @@ describe("browser evidence repository", () => {
         productCondition: "unopened_only",
         remedyWindow: { kind: "known" as const, days: 7, startsAt: "delivered" as const, requiredAction: "request_submitted" as const },
         returnTransport: "self_ship",
-        reversalCost: { kind: "none_stated" },
+        reversalCost: { kind: "unstated" },
         materialConditions: [
           {
             detail: "Keep the Product sealed.",

@@ -16,52 +16,62 @@ export type Offer = {
   readonly url: string;
 };
 
+/** Ordered policy facts required by the extraction and citation contract. */
+export const POLICY_FACTS = [
+  "remedy",
+  "window",
+  "product_condition",
+  "return_transport",
+  "buyer_paid_fees",
+] as const;
+
+/** One member of the five-field policy extraction contract. */
+export type PolicyFact = (typeof POLICY_FACTS)[number];
+
+/** Exact source wording and provenance supporting a policy fact. */
+export type EvidenceCitation = {
+  readonly quote: string;
+  readonly sourceUrl: string;
+};
+
 /** Policy facts extracted from an Evidence Snapshot. */
 export type PolicyAssessment = {
   readonly offerId: Offer["id"];
   readonly changeOfMind: "money_back" | "store_credit" | "none" | "unclear";
   readonly defect: "replacement" | "money_back" | "none" | "unclear";
   readonly productCondition: "unopened_only" | "opened_unused" | "trial_allowed" | "unclear";
-  readonly remedyWindow: {
-    readonly kind: "known" | "unclear";
-    readonly days: number | null;
-    readonly startsAt: "ordered" | "purchased" | "delivered" | null;
-    readonly requiredAction: "request_submitted" | "item_shipped" | "item_received" | null;
-  };
+  readonly remedyWindow:
+    | {
+        readonly kind: "known";
+        readonly days: number;
+        readonly startsAt: "ordered" | "purchased" | "delivered";
+        readonly requiredAction: "request_submitted" | "item_shipped" | "item_received";
+      }
+    | { readonly kind: "unclear" };
   readonly returnTransport: "doorstep_pickup" | "self_ship" | "unclear";
   readonly reversalCost:
     | { readonly kind: "explicit_none" }
     | { readonly kind: "known"; readonly amountInr: number }
-    | { readonly kind: "none_stated" }
+    | { readonly kind: "unstated" }
     | { readonly kind: "unpriced_required" }
     | { readonly kind: "unclear" };
   readonly materialConditions: ReadonlyArray<{
     readonly detail: string;
-    readonly citation: {
-      readonly quote: string;
-      readonly sourceUrl: string;
-    };
+    readonly citation: EvidenceCitation;
   }>;
   readonly supplementaryRemedies: ReadonlyArray<{
     readonly kind:
       | "warranty"
+      | "replacement"
       | "pre_dispatch_cancellation"
       | "refund_processing_timing";
     readonly detail: string;
-    readonly citation: {
-      readonly quote: string;
-      readonly sourceUrl: string;
-    };
+    readonly citation: EvidenceCitation;
   }>;
   /** Primary remedy quote retained for the compact Approval Summary. */
   readonly quote: string;
   readonly citations: ReadonlyArray<{
-    readonly fact:
-      | "remedy"
-      | "window"
-      | "product_condition"
-      | "return_transport"
-      | "buyer_paid_fees";
+    readonly fact: PolicyFact;
     readonly quote: string;
     readonly sourceUrl: string;
   }>;

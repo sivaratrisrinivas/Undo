@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { EvidenceSnapshot } from "../domain";
 import {
   extractPoliciesWithOpenAi,
+  openAiApiKeyFrom,
   parsePolicyEvidenceInput,
 } from "./openai-policy-extraction-server";
 
-const evidence: ReadonlyArray<EvidenceSnapshot> = [
-  {
+const evidenceSnapshot: EvidenceSnapshot = {
     offerId: "headphone-zone",
     merchant: "Headphone Zone",
     sourceUrl: "https://www.headphonezone.in/pages/returns-refunds",
@@ -18,10 +18,16 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
     fingerprint: "sha256:test",
     retrievedVia: "senso",
     retrievalState: "current",
-  },
-];
+};
+const evidence: ReadonlyArray<EvidenceSnapshot> = [evidenceSnapshot];
 
 describe("OpenAI policy extraction server boundary", () => {
+  it("redacts the API key outside the authorization header", () => {
+    const apiKey = openAiApiKeyFrom("test-secret");
+    expect(String(apiKey)).toBe("[REDACTED]");
+    expect(JSON.stringify(apiKey)).toBe('"[REDACTED]"');
+  });
+
   it("reconstructs official snapshots without forwarding unexpected personal fields", () => {
     const parsed = parsePolicyEvidenceInput([
       {
@@ -57,7 +63,7 @@ describe("OpenAI policy extraction server boundary", () => {
               detail: "Product must remain sealed and unopened.",
               citation: {
                 quote: "when sealed and unopened",
-                sourceUrl: evidence[0]!.sourceUrl,
+                sourceUrl: evidenceSnapshot.sourceUrl,
               },
             },
           ],
@@ -66,27 +72,27 @@ describe("OpenAI policy extraction server boundary", () => {
             {
               fact: "remedy",
               quote: "Eligible products may be returned for a refund",
-              sourceUrl: evidence[0]!.sourceUrl,
+              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "window",
               quote: "within 7 days of delivery",
-              sourceUrl: evidence[0]!.sourceUrl,
+              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "product_condition",
               quote: "when sealed and unopened",
-              sourceUrl: evidence[0]!.sourceUrl,
+              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "return_transport",
               quote: "Return shipping",
-              sourceUrl: evidence[0]!.sourceUrl,
+              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "buyer_paid_fees",
               quote: "Return shipping costs ₹250",
-              sourceUrl: evidence[0]!.sourceUrl,
+              sourceUrl: evidenceSnapshot.sourceUrl,
             },
           ],
         },
@@ -108,19 +114,20 @@ describe("OpenAI policy extraction server boundary", () => {
     );
 
     const result = await extractPoliciesWithOpenAi(evidence, {
-      apiKey: "test-key",
+      apiKey: openAiApiKeyFrom("test-key"),
       fetcher,
       model: "gpt-test",
     });
 
-    expect(result).toEqual([
+    expect(result).toEqual({ _tag: "ok", value: [
       {
         ...output.policies[0],
         quote: "Eligible products may be returned for a refund",
       },
-    ]);
+    ] });
     const request = fetcher.mock.calls[0];
     expect(request?.[0]).toBe("https://api.openai.com/v1/responses");
+    expect(new Headers(request?.[1]?.headers).get("Authorization")).toBe("Bearer test-key");
     const requestBody = request?.[1]?.body;
     if (typeof requestBody !== "string") throw new Error("Expected a JSON request body");
     const body = JSON.parse(requestBody) as Record<string, unknown>;
@@ -187,7 +194,7 @@ describe("OpenAI policy extraction server boundary", () => {
                         ].map((fact) => ({
                           fact,
                           quote: "This wording was invented",
-                          sourceUrl: evidence[0]!.sourceUrl,
+                          sourceUrl: evidenceSnapshot.sourceUrl,
                         })),
                       },
                     ],
@@ -201,8 +208,19 @@ describe("OpenAI policy extraction server boundary", () => {
       ),
     );
 
-    await expect(
-      extractPoliciesWithOpenAi(evidence, { apiKey: "test-key", fetcher }),
-    ).rejects.toThrow("exact citation");
+    const result = await extractPoliciesWithOpenAi(evidence, {
+      apiKey: openAiApiKeyFrom("test-key"),
+      fetcher,
+    });
+    expect(result).toMatchObject({ _tag: "err", error: { kind: "invalid_output" } });
+  });
+
+  it("classifies cancellation separately from transport failure", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new DOMException("cancelled", "AbortError"));
+    const result = await extractPoliciesWithOpenAi(evidence, {
+      apiKey: openAiApiKeyFrom("test-key"),
+      fetcher,
+    });
+    expect(result).toMatchObject({ _tag: "err", error: { kind: "cancelled" } });
   });
 });

@@ -11,10 +11,11 @@ import type {
   ReviewedEvidenceCache,
   UndoRecord,
 } from "./domain";
-import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_OFFERS } from "./domain";
+import { OFFICIAL_EVIDENCE_SOURCES, POLICY_FACTS, SUPPORTED_OFFERS } from "./domain";
 
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
+  readonly policyContract: { purchaseEnabled(): boolean };
   readonly senso: {
     retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
   };
@@ -111,8 +112,9 @@ function compareEligibleOffers(
     remedyOrder[right.policy.changeOfMind] - remedyOrder[left.policy.changeOfMind];
   if (remedyDifference !== 0) return remedyDifference;
 
-  const windowDifference =
-    (right.policy.remedyWindow.days ?? 0) - (left.policy.remedyWindow.days ?? 0);
+  const leftWindowDays = left.policy.remedyWindow.kind === "known" ? left.policy.remedyWindow.days : 0;
+  const rightWindowDays = right.policy.remedyWindow.kind === "known" ? right.policy.remedyWindow.days : 0;
+  const windowDifference = rightWindowDays - leftWindowDays;
   if (windowDifference !== 0) return windowDifference;
 
   const transportOrder = { doorstep_pickup: 2, self_ship: 1, unclear: 0 } as const;
@@ -299,11 +301,28 @@ export class AssessmentWorkflow {
       );
     }
 
-    policies = evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!.policy);
+    const reviewedPolicies = evidence.flatMap((snapshot) => {
+      const review = reviews.get(snapshot.fingerprint);
+      return review === undefined ? [] : [review.policy];
+    });
+    if (reviewedPolicies.length !== evidence.length) {
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        destinationReference,
+        evidence,
+        "Policy Evidence changed and requires human review",
+      );
+    }
+    policies = reviewedPolicies;
     if (!usingCache) {
+      const completeReviews = evidence.flatMap((snapshot) => {
+        const review = reviews.get(snapshot.fingerprint);
+        return review === undefined ? [] : [review];
+      });
       await this.adapters.evidence.saveCache({
         snapshots: evidence,
-        reviews: evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!),
+        reviews: completeReviews,
       });
     }
 
@@ -495,14 +514,7 @@ export class AssessmentWorkflow {
     snapshot: EvidenceSnapshot,
     policy: PolicyAssessment,
   ): boolean {
-    const requiredFacts: ReadonlyArray<PolicyAssessment["citations"][number]["fact"]> = [
-      "remedy",
-      "window",
-      "product_condition",
-      "return_transport",
-      "buyer_paid_fees",
-    ];
-    const hasRequiredCitations = requiredFacts.every((fact) => {
+    const hasRequiredCitations = POLICY_FACTS.every((fact) => {
       const citations = policy.citations.filter((citation) => citation.fact === fact);
       const citation = citations[0];
       return (
@@ -519,15 +531,7 @@ export class AssessmentWorkflow {
       snapshot.exactText.includes(citation.quote);
     const remedyCitation = policy.citations.find((citation) => citation.fact === "remedy");
     const hasValidWindow =
-      (policy.remedyWindow.kind === "known" &&
-        policy.remedyWindow.days !== null &&
-        policy.remedyWindow.days > 0 &&
-        policy.remedyWindow.startsAt !== null &&
-        policy.remedyWindow.requiredAction !== null) ||
-      (policy.remedyWindow.kind === "unclear" &&
-        policy.remedyWindow.days === null &&
-        policy.remedyWindow.startsAt === null &&
-        policy.remedyWindow.requiredAction === null);
+      policy.remedyWindow.kind === "unclear" || policy.remedyWindow.days > 0;
     return (
       hasRequiredCitations &&
       remedyCitation !== undefined &&

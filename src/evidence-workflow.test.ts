@@ -72,6 +72,7 @@ function adapters(
 ): AssessmentAdapters {
   const reviewByFingerprint = new Map(reviews.map((review) => [review.fingerprint, review]));
   return {
+    policyContract: { purchaseEnabled: () => true },
     senso: {
       retrieveEvidence: () =>
         options?.failSenso === true
@@ -354,15 +355,18 @@ describe("Policy Evidence workflow", () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
     const reviews = snapshots.slice(1).map(
-      (snapshot, index): EvidenceReview => ({
+      (snapshot): EvidenceReview => ({
         fingerprint: snapshot.fingerprint,
         approvedAt: "2026-08-01T12:00:00.000Z",
-        policy: policies[index + 1]!,
+        policy: policyFor(snapshot.offerId),
       }),
     );
     const workflow = new AssessmentWorkflow(adapters(snapshots, policies, reviews));
 
-    await workflow.approveEvidence(snapshots[0]!, policies[0]!);
+    const firstSnapshot = snapshots[0];
+    const firstPolicy = policies[0];
+    if (firstSnapshot === undefined || firstPolicy === undefined) throw new Error("Missing fixture");
+    await workflow.approveEvidence(firstSnapshot, firstPolicy);
     const result = await workflow.assess(
       SUPPORTED_PRODUCT,
       premiumLimit(),
@@ -379,11 +383,14 @@ describe("Policy Evidence workflow", () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
     const workflow = new AssessmentWorkflow(adapters(snapshots, policies, []));
+    const firstSnapshot = snapshots[0];
+    const firstPolicy = policies[0];
+    if (firstSnapshot === undefined || firstPolicy === undefined) throw new Error("Missing fixture");
 
     await expect(
-      workflow.approveEvidence(snapshots[0]!, {
-        ...policies[0]!,
-        citations: policies[0]!.citations.map((citation, index) =>
+      workflow.approveEvidence(firstSnapshot, {
+        ...firstPolicy,
+        citations: firstPolicy.citations.map((citation, index) =>
           index === 0
             ? { ...citation, quote: "A claim that the official wording does not support." }
             : citation,

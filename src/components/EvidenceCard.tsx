@@ -29,7 +29,7 @@ function policyFacts(policy: PolicyAssessment) {
       ? `₹${policy.reversalCost.amountInr} Reversal Cost`
       : {
           explicit_none: "Explicit ₹0 Reversal Cost",
-          none_stated: "Unstated Cost",
+          unstated: "Unstated Cost",
           unpriced_required: "Unpriced Required Cost",
           unclear: "Policy Unclear",
         }[policy.reversalCost.kind];
@@ -37,7 +37,7 @@ function policyFacts(policy: PolicyAssessment) {
     remedy: `${changeOfMind}; defect remedy: ${defect}`,
     window:
       policy.remedyWindow.kind === "known"
-        ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}; ${policy.remedyWindow.requiredAction?.replaceAll("_", " ")}`
+        ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}; ${policy.remedyWindow.requiredAction.replaceAll("_", " ")}`
         : "Policy Unclear",
     product_condition: condition,
     return_transport: transport,

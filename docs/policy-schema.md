@@ -81,12 +81,15 @@ Allowed values:
 
 - `known_amount`
 - `known_fee_amount_missing`
-- `none_stated`
+- `unstated` (OpenAI wire value: `none_stated`)
 - `unclear`
 
 When known, the fee amount and fee type are retained.
 
-`none_stated` means the evidence is silent about fees. It does not mean the fee is ₹0. Undo displays “No fee stated—cost uncertain,” and an otherwise equal Offer with an explicit zero-fee or free-pickup promise ranks above it.
+`unstated` means the evidence is silent about fees. The strict OpenAI output schema calls this
+`none_stated`; the server normalizes it to the domain's Unstated Cost vocabulary. It does not mean
+the fee is ₹0. Undo displays “No fee stated—cost uncertain,” and an otherwise equal Offer with an
+explicit zero-fee or free-pickup promise ranks above it.
 
 `known_fee_amount_missing` means the evidence confirms that the buyer must pay a fee or another required return cost but does not support its amount. Undo may show the Offer, but it must not buy it automatically because Reversal Cost cannot be calculated.
 
@@ -94,9 +97,9 @@ When known, the fee amount and fee type are retained.
 
 Every required policy field must be supported by complete, consistent Policy Evidence. If any field is `unclear`, the Offer is Policy Unclear and Undo must not buy it automatically.
 
-`none_stated` is different from `unclear`:
+`unstated` is different from `unclear`:
 
-- `none_stated`: the applicable evidence was examined and is silent about fees. Undo may proceed with the visible warning “No fee stated—cost uncertain.”
+- `unstated`: the applicable evidence was examined and is silent about fees. Undo may proceed with the visible warning “No fee stated—cost uncertain.”
 - `known_fee_amount_missing`: the evidence confirms a fee but not its amount. Undo must stop automatic buying.
 - `unclear`: the evidence needed to determine the field is missing, incomplete, or conflicting. Undo must stop automatic buying.
 

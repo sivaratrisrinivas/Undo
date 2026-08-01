@@ -12,17 +12,21 @@ import {
 } from "./domain";
 import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 
-const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) => ({
+const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) => {
+  const source = OFFICIAL_EVIDENCE_SOURCES.find((candidate) => candidate.offerId === offer.id);
+  if (source === undefined) throw new Error(`Missing official source fixture for ${offer.id}`);
+  return {
   offerId: offer.id,
   merchant: offer.merchant,
-  sourceUrl: OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offer.id)!.sourceUrl,
-  scope: OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offer.id)!.scope,
+  sourceUrl: source.sourceUrl,
+  scope: source.scope,
   collectedAt: "2026-08-01T10:30:00.000Z",
   exactText: "Deterministic ranking test evidence.",
   fingerprint: `sha256:${offer.id}`,
   retrievedVia: "senso",
   retrievalState: "current",
-}));
+  };
+});
 
 function makePolicy(offerId: Offer["id"]): PolicyAssessment {
   const sourceUrl = OFFICIAL_EVIDENCE_SOURCES.find((source) => source.offerId === offerId)?.sourceUrl ?? "";
@@ -51,17 +55,23 @@ function makeAdapters(
   policies: ReadonlyArray<PolicyAssessment>,
   quotes: ReadonlyArray<CheckoutQuote>,
 ): AssessmentAdapters {
+  const policyFor = (offerId: PolicyAssessment["offerId"]) => {
+    const policy = policies.find((candidate) => candidate.offerId === offerId);
+    if (policy === undefined) throw new Error(`Missing policy fixture for ${offerId}`);
+    return policy;
+  };
   const reviews = new Map(
     snapshots.map((snapshot) => [
       snapshot.fingerprint,
       {
         fingerprint: snapshot.fingerprint,
         approvedAt: "2026-08-01T11:00:00.000Z",
-        policy: policies.find((policy) => policy.offerId === snapshot.offerId)!,
+        policy: policyFor(snapshot.offerId),
       },
     ]),
   );
   return {
+    policyContract: { purchaseEnabled: () => true },
     senso: { retrieveEvidence: () => Promise.resolve({ _tag: "ok", value: snapshots }) },
     openAi: {
       modelVersion: () => "fake-openai/test",
@@ -123,7 +133,7 @@ describe("Remedy Ranking", () => {
     {
       rule: "lower evidenced Reversal Cost",
       left: { reversalCost: { kind: "explicit_none" as const } },
-      right: { reversalCost: { kind: "none_stated" as const } },
+      right: { reversalCost: { kind: "unstated" as const } },
     },
   ])("applies $rule before purchase price", async ({ left, right }) => {
     const policies = [

@@ -22,10 +22,10 @@ const policy: PolicyAssessment = {
   offerId: "concept-kart",
   changeOfMind: "none",
   defect: "replacement",
-  remedyWindow: { kind: "unclear", days: null, startsAt: null, requiredAction: null },
+  remedyWindow: { kind: "unclear" },
   productCondition: "unclear",
   returnTransport: "unclear",
-  reversalCost: { kind: "none_stated" },
+  reversalCost: { kind: "unstated" },
   materialConditions: [],
   supplementaryRemedies: [
     {

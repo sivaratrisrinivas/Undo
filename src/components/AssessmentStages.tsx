@@ -82,6 +82,7 @@ export function EvidenceReviewStage(props: {
 export function ApprovalStage(props: {
   readonly assessment: ReversibilityAssessment;
   readonly selectedOffer: AssessedOffer;
+  readonly purchaseEnabled: boolean;
   readonly acknowledgedWarnings: ReadonlySet<string>;
   readonly onAcknowledgementChange: (warning: string, checked: boolean) => void;
   readonly onContinue: () => void;
@@ -91,23 +92,30 @@ export function ApprovalStage(props: {
   const condition = policy.productCondition === "trial_allowed" ? "Trial permitted" : policy.productCondition === "opened_unused" ? "Opened but unused" : "Sealed and unopened only";
   const transport = policy.returnTransport === "doorstep_pickup" ? "Doorstep pickup" : "Self-ship";
   const cost = policy.reversalCost.kind === "explicit_none" ? "₹0 evidenced" : policy.reversalCost.kind === "known" ? `₹${policy.reversalCost.amountInr.toLocaleString("en-IN")}` : "No fee stated—cost uncertain";
+  const window = policy.remedyWindow.kind === "known"
+    ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}`
+    : "Policy Unclear";
   const warnings = [
     ...policy.materialConditions.map((condition) => condition.detail),
-    ...(policy.reversalCost.kind === "none_stated" ? ["No fee stated—cost uncertain."] : []),
+    ...(policy.reversalCost.kind === "unstated" ? ["No fee stated—cost uncertain."] : []),
   ];
   const warningsAcknowledged = warnings.every((warning) => props.acknowledgedWarnings.has(warning));
+  const canContinue = props.purchaseEnabled && warningsAcknowledged;
   return (
     <div className="stage-card compact">
       <p className="step-kicker">Step 5 of 7</p><h2>Approval Summary</h2><p className="stage-copy">The exact choice that a Purchase Authorization would cover.</p>
       <dl className="summary-list">
-        <div><dt>Product</dt><dd>Sennheiser HD 560S · New · Black</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {policy.remedyWindow.days} days from {policy.remedyWindow.startsAt}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
+        <div><dt>Product</dt><dd>Sennheiser HD 560S · New · Black</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {window}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
         <div><dt>Evidence state</dt><dd>{props.selectedOffer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"} · Reviewed Evidence</dd></div>
       </dl>
       <div className="policy-citation"><h3>Supporting Policy Evidence</h3><blockquote>“{policy.quote}”</blockquote><a href={props.selectedOffer.evidence.sourceUrl}>{props.selectedOffer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a><small>Collected {new Date(props.selectedOffer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {props.selectedOffer.evidence.scope.kind}: {props.selectedOffer.evidence.scope.value}</small></div>
       {warnings.map((warning) => (
         <label className="warning-check" key={warning}><input checked={props.acknowledgedWarnings.has(warning)} onChange={(event) => props.onAcknowledgementChange(warning, event.target.checked)} type="checkbox" /><span><strong>I acknowledge: {warning}</strong></span></label>
       ))}
-      <button className="primary-button" disabled={!warningsAcknowledged} onClick={props.onContinue} type="button">Continue to checkout <span aria-hidden="true">→</span></button>
+      {!props.purchaseEnabled && (
+        <p className="error-message" role="alert">Purchase is blocked until OpenAI extraction passes the human-reviewed official-source policy contract.</p>
+      )}
+      <button className="primary-button" disabled={!canContinue} onClick={props.onContinue} type="button">Continue to checkout <span aria-hidden="true">→</span></button>
     </div>
   );
 }
