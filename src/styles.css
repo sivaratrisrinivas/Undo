@@ -96,6 +96,9 @@ dl { margin: 0; }
 dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
 dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .evidence-card a { display: inline-block; margin-top: 1rem; color: var(--blue); font-weight: 750; }
+.policy-citation { margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--line); background: var(--surface-raised); }
+.policy-citation a, .policy-citation small { display: block; margin-top: .75rem; overflow-wrap: anywhere; }
+.policy-citation a { color: var(--blue); font-weight: 750; }
 .summary-list { margin: 2rem 0; border-top: 1px solid var(--line); }
 .summary-list > div { display: grid; grid-template-columns: minmax(150px, .7fr) 1.3fr; gap: 1rem; padding: .8rem 0; border-bottom: 1px solid var(--line); }
 .summary-list dd { text-align: right; font-weight: 700; }

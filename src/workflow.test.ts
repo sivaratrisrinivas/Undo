@@ -13,10 +13,14 @@ import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 
 const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) => ({
   offerId: offer.id,
+  merchant: offer.merchant,
   sourceUrl: offer.url,
+  scope: { kind: "product", value: "Sennheiser HD 560S" },
   collectedAt: "2026-08-01T10:30:00.000Z",
   exactText: "Deterministic ranking test evidence.",
   fingerprint: `sha256:${offer.id}`,
+  retrievedVia: "senso",
+  retrievalState: "current",
 }));
 
 function makePolicy(offerId: Offer["id"]): PolicyAssessment {

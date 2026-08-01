@@ -2,11 +2,13 @@ import type {
   AssessedOffer,
   CheckoutQuote,
   EvidenceSnapshot,
+  EvidenceReview,
   Offer,
   PolicyAssessment,
   PremiumLimitInr,
   Product,
   ReversibilityAssessment,
+  ReviewedEvidenceCache,
   UndoRecord,
 } from "./domain";
 import { SUPPORTED_OFFERS } from "./domain";
@@ -27,6 +29,12 @@ export type AssessmentAdapters = {
       destinationReference: string,
     ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>>;
     submitCheckout(offer: Offer, maximumTotalInr: number): Promise<AdapterResult<never>>;
+  };
+  readonly evidence?: {
+    findReview(fingerprint: string): Promise<EvidenceReview | undefined>;
+    saveReview(review: EvidenceReview): Promise<void>;
+    loadCache(product: Product): Promise<ReviewedEvidenceCache | undefined>;
+    saveCache(cache: ReviewedEvidenceCache): Promise<void>;
   };
   readonly now: () => string;
   readonly nextRecordId: () => string;
@@ -55,6 +63,7 @@ export type AssessmentFailure =
       readonly _tag: "NoEligibleOffer";
       readonly message: string;
       readonly reason: "purchase_unavailable" | "blocked_by_policy" | "blocked_by_price";
+      readonly record?: UndoRecord;
     };
 
 type AssessmentResult =
@@ -113,6 +122,26 @@ function compareEligibleOffers(
 export class AssessmentWorkflow {
   constructor(private readonly adapters: AssessmentAdapters) {}
 
+  /** Saves a human approval for the extracted facts tied to one exact fingerprint. */
+  async approveEvidence(
+    snapshot: EvidenceSnapshot,
+    policy: PolicyAssessment,
+  ): Promise<EvidenceReview> {
+    if (this.adapters.evidence === undefined) {
+      throw new Error("Evidence review storage is not configured");
+    }
+    if (snapshot.offerId !== policy.offerId) {
+      throw new Error("Evidence and extracted policy must belong to the same Offer");
+    }
+    const review: EvidenceReview = {
+      fingerprint: snapshot.fingerprint,
+      approvedAt: this.adapters.now(),
+      policy,
+    };
+    await this.adapters.evidence.saveReview(review);
+    return review;
+  }
+
   /** Builds the deterministic comparison from evidence, extraction, and quote adapters. */
   async assess(
     product: Product,
@@ -123,16 +152,6 @@ export class AssessmentWorkflow {
       this.adapters.senso.retrieveEvidence(product),
       this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, destinationReference),
     ]);
-    if (evidenceResult._tag === "err") {
-      return {
-        _tag: "err",
-        error: {
-          _tag: "AssessmentUnavailable",
-          message: "Policy check unavailable",
-          cause: evidenceResult.error,
-        },
-      };
-    }
     if (quotesResult._tag === "err") {
       return {
         _tag: "err",
@@ -143,20 +162,112 @@ export class AssessmentWorkflow {
         },
       };
     }
-    const evidence = evidenceResult.value;
     const quotes = quotesResult.value;
-    const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
-    if (policiesResult._tag === "err") {
-      return {
-        _tag: "err",
-        error: {
-          _tag: "AssessmentUnavailable",
-          message: "Policy check unavailable",
-          cause: policiesResult.error,
-        },
-      };
+    let evidence: ReadonlyArray<EvidenceSnapshot>;
+    let policies: ReadonlyArray<PolicyAssessment>;
+    let reviews: Map<string, EvidenceReview | undefined>;
+    const usingCache = evidenceResult._tag === "err";
+
+    if (evidenceResult._tag === "err") {
+      const cache = await this.adapters.evidence?.loadCache(product);
+      if (cache === undefined) {
+        return this.policyBlock(
+          product,
+          premiumLimitInr,
+          destinationReference,
+          [],
+          "Policy check unavailable: Senso retrieval failed and no valid cache exists",
+        );
+      }
+      evidence = cache.snapshots.map((snapshot) => ({
+        ...snapshot,
+        retrievalState: "cached" as const,
+      }));
+      policies = cache.reviews.map((review) => review.policy);
+      reviews = new Map(cache.reviews.map((review) => [review.fingerprint, review]));
+    } else {
+      evidence = evidenceResult.value;
+      if (!this.hasCompleteEvidence(evidence)) {
+        return this.policyBlock(
+          product,
+          premiumLimitInr,
+          destinationReference,
+          evidence,
+          "Policy Evidence is incomplete for one or more Offers",
+        );
+      }
+      const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
+      if (policiesResult._tag === "err") {
+        return {
+          _tag: "err",
+          error: {
+            _tag: "AssessmentUnavailable",
+            message: "Policy check unavailable",
+            cause: policiesResult.error,
+          },
+        };
+      }
+      policies = policiesResult.value;
+      reviews =
+        this.adapters.evidence === undefined
+          ? new Map<string, EvidenceReview>()
+          : new Map(
+              await Promise.all(
+                evidence.map(async (snapshot) => [
+                  snapshot.fingerprint,
+                  await this.adapters.evidence!.findReview(snapshot.fingerprint),
+                ] as const),
+              ),
+            );
     }
-    const policies = policiesResult.value;
+
+    if (!this.hasCompleteEvidence(evidence)) {
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        destinationReference,
+        evidence,
+        "Policy Evidence is incomplete for one or more Offers",
+      );
+    }
+    if (this.adapters.evidence !== undefined) {
+      const unreviewed = evidence.some(
+        (snapshot) =>
+          reviews.get(snapshot.fingerprint) === undefined ||
+          reviews.get(snapshot.fingerprint)?.policy.offerId !== snapshot.offerId,
+      );
+      if (unreviewed) {
+        return this.policyBlock(
+          product,
+          premiumLimitInr,
+          destinationReference,
+          evidence,
+          "Policy Evidence changed and requires human review",
+        );
+      }
+
+      const now = Date.parse(this.adapters.now());
+      const hasStaleEvidence = evidence.some(
+        (snapshot) => now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000,
+      );
+      if (hasStaleEvidence) {
+        return this.policyBlock(
+          product,
+          premiumLimitInr,
+          destinationReference,
+          evidence,
+          "Stale Evidence must be refreshed before purchase",
+        );
+      }
+
+      policies = evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!.policy);
+      if (!usingCache) {
+        await this.adapters.evidence.saveCache({
+          snapshots: evidence,
+          reviews: evidence.map((snapshot) => reviews.get(snapshot.fingerprint)!),
+        });
+      }
+    }
 
     const availableTotals = quotes
       .filter((quote) => quote.purchaseAvailable)
@@ -197,6 +308,10 @@ export class AssessmentWorkflow {
         offer,
         policy,
         evidence: snapshot,
+        evidenceReview: {
+          state: reviews.get(snapshot.fingerprint) === undefined ? "unreviewed" : "reviewed",
+          reused: reviews.get(snapshot.fingerprint) !== undefined,
+        },
         checkoutQuote,
         rank: null,
         eligible,
@@ -294,6 +409,87 @@ export class AssessmentWorkflow {
         "All three curated Offers identify the same new Sennheiser HD 560S Product.",
         "Fixture evidence and quotes are deterministic demo substitutes, not live merchant data.",
         "No checkout was submitted because the buyer declined.",
+      ],
+      versions: {
+        policySchema: "policy-schema/1.0",
+        extractionPrompt: "policy-extraction/1.0",
+        model: "fake-openai/deterministic-1",
+        rankingRules: "remedy-ranking/1.0",
+      },
+    };
+  }
+
+  private hasCompleteEvidence(evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
+    return SUPPORTED_OFFERS.every((offer) => {
+      const snapshots = evidence.filter((snapshot) => snapshot.offerId === offer.id);
+      const snapshot = snapshots[0];
+      return (
+        snapshots.length === 1 &&
+        snapshot !== undefined &&
+        snapshot.merchant.trim() !== "" &&
+        snapshot.sourceUrl.trim() !== "" &&
+        snapshot.scope.value.trim() !== "" &&
+        snapshot.exactText.trim() !== "" &&
+        snapshot.fingerprint.trim() !== "" &&
+        Number.isFinite(Date.parse(snapshot.collectedAt)) &&
+        snapshot.retrievedVia === "senso"
+      );
+    });
+  }
+
+  private policyBlock(
+    product: Product,
+    premiumLimitInr: PremiumLimitInr,
+    destinationReference: string,
+    evidence: ReadonlyArray<EvidenceSnapshot>,
+    message: string,
+  ): AssessmentResult {
+    return {
+      _tag: "err",
+      error: {
+        _tag: "NoEligibleOffer",
+        message,
+        reason: "blocked_by_policy",
+        record: this.blockedRecord(
+          product,
+          premiumLimitInr,
+          destinationReference,
+          evidence,
+          message,
+        ),
+      },
+    };
+  }
+
+  private blockedRecord(
+    product: Product,
+    premiumLimitInr: PremiumLimitInr,
+    destinationReference: string,
+    evidence: ReadonlyArray<EvidenceSnapshot>,
+    blockingReason: string,
+  ): UndoRecord {
+    return {
+      id: this.adapters.nextRecordId(),
+      createdAt: this.adapters.now(),
+      outcome: "blocked_by_policy",
+      product,
+      selectedMerchant: null,
+      selectedSeller: null,
+      confirmedCheckoutTotalInr: null,
+      premiumLimitInr,
+      destinationReference,
+      evidence,
+      recommendation: {
+        rankedOfferIds: [],
+        selectedOfferId: null,
+        selection: "none",
+        rankingRules: "remedy-ranking/1.0",
+      },
+      authorizationState: "not_requested",
+      blockingReason,
+      assumptions: [
+        "All three curated Offers identify the same new Sennheiser HD 560S Product.",
+        "No Purchase Authorization was created because Policy Evidence was blocked.",
       ],
       versions: {
         policySchema: "policy-schema/1.0",

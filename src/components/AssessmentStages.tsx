@@ -42,14 +42,14 @@ export function EvidenceStage(props: { readonly assessment: ReversibilityAssessm
   return (
     <div className="stage-card wide">
       <p className="step-kicker">Step 4 of 7</p><h2>Policy Evidence</h2>
-      <p className="stage-copy">Deterministic demo snapshots stand in for the normal Senso → OpenAI path.</p>
+      <p className="stage-copy">Official merchant wording retrieved through Senso and reviewed by exact content fingerprint.</p>
       <div className="evidence-grid">
         {props.assessment.offers.map((offer) => (
           <article className="evidence-card" key={offer.offer.id}>
-            <div className="evidence-header"><h3>{offer.offer.merchant}</h3><span>Current fixture</span></div>
+            <div className="evidence-header"><h3>{offer.evidence.merchant}</h3><span>{offer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"}</span></div>
             <blockquote>“{offer.evidence.exactText}”</blockquote>
-            <dl><div><dt>Collected</dt><dd>{new Date(offer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Fingerprint</dt><dd>{offer.evidence.fingerprint}</dd></div></dl>
-            <a href={offer.evidence.sourceUrl}>Source reference <span aria-hidden="true">↗</span></a>
+            <dl><div><dt>Scope</dt><dd>{offer.evidence.scope.kind}: {offer.evidence.scope.value}</dd></div><div><dt>Collected</dt><dd>{new Date(offer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Review</dt><dd>{offer.evidenceReview.state === "reviewed" ? "Reviewed Evidence" : "Review required"}</dd></div><div><dt>Fingerprint</dt><dd>{offer.evidence.fingerprint}</dd></div></dl>
+            <a href={offer.evidence.sourceUrl}>{offer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a>
           </article>
         ))}
       </div>
@@ -81,7 +81,9 @@ export function ApprovalStage(props: {
       <p className="step-kicker">Step 5 of 7</p><h2>Approval Summary</h2><p className="stage-copy">The exact choice that a Purchase Authorization would cover.</p>
       <dl className="summary-list">
         <div><dt>Product</dt><dd>Sennheiser HD 560S · New · Black</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {policy.remedyWindow.days} days from {policy.remedyWindow.startsAt}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
+        <div><dt>Evidence state</dt><dd>{props.selectedOffer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"} · Reviewed Evidence</dd></div>
       </dl>
+      <div className="policy-citation"><h3>Supporting Policy Evidence</h3><blockquote>“{policy.quote}”</blockquote><a href={props.selectedOffer.evidence.sourceUrl}>{props.selectedOffer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a><small>Collected {new Date(props.selectedOffer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {props.selectedOffer.evidence.scope.kind}: {props.selectedOffer.evidence.scope.value}</small></div>
       {warnings.map((warning) => (
         <label className="warning-check" key={warning}><input checked={props.acknowledgedWarnings.has(warning)} onChange={(event) => props.onAcknowledgementChange(warning, event.target.checked)} type="checkbox" /><span><strong>I acknowledge: {warning}</strong></span></label>
       ))}

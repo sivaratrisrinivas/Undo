@@ -6,7 +6,7 @@ Undo helps a buyer choose among equivalent product Offers by comparing the evide
 
 The repository contains the first working vertical slice: a seven-stage Reversibility Assessment for the Sennheiser HD 560S. It covers Product input, buyer constraints, Offer comparison, Policy Evidence, Approval Summary, checkout decision, and a resulting Undo Record.
 
-The application currently uses clearly labelled, deterministic fake Senso, OpenAI, and Prava adapters. It does not perform live policy retrieval or purchasing.
+The normal evidence path calls a same-origin `/api/policy-evidence` backend that owns the Senso API key and returns official-source documents. The browser fingerprints exact text, reuses human review only for that fingerprint, enforces the 24-hour freshness limit, and persists the last complete Reviewed Evidence cache. OpenAI extraction and Prava checkout remain deterministic adapters in this ticket.
 
 ## Supported demo scope
 
@@ -34,6 +34,29 @@ npm run dev
 ```
 
 Open the local URL printed by Vite.
+
+The default mode expects `POST /api/policy-evidence`. Its request body contains only the supported Product identity. The backend must query the curated official sources through Senso and return:
+
+```json
+{
+  "documents": [
+    {
+      "offerId": "headphone-zone",
+      "merchant": "Headphone Zone",
+      "sourceUrl": "https://www.headphonezone.in/pages/returns-refunds",
+      "scope": { "kind": "product", "value": "Sennheiser HD 560S" },
+      "collectedAt": "2026-08-02T08:00:00.000Z",
+      "exactText": "Exact official wording"
+    }
+  ]
+}
+```
+
+Keep `SENSO_API_KEY` on that backend; never expose it through a `VITE_` variable. To run the deterministic local walking skeleton without the backend, use:
+
+```sh
+VITE_EVIDENCE_MODE=fake npm run dev
+```
 
 ## Verification
 

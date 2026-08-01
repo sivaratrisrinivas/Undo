@@ -28,6 +28,14 @@ describe("guided Reversibility Assessment", () => {
 
     expect(screen.getByRole("heading", { name: "Policy Evidence" })).toBeVisible();
     expect(screen.getByText(/sealed and unopened/i)).toBeVisible();
+    expect(screen.getAllByText("Current Evidence")).toHaveLength(3);
+    expect(screen.getAllByText("Reviewed Evidence")).toHaveLength(3);
+    expect(screen.getByText("product: Sennheiser HD 560S")).toBeVisible();
+    expect(
+      screen.getByRole("link", {
+        name: /https:\/\/www\.headphonezone\.in\/pages\/returns-refunds/,
+      }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Review approval summary" }));
 
     expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
@@ -127,7 +135,6 @@ describe("guided Reversibility Assessment", () => {
   });
 
   it.each([
-    { dependency: "Senso", failure: { failSenso: true } },
     { dependency: "OpenAI", failure: { failOpenAi: true } },
     { dependency: "Prava quote", failure: { failPravaQuote: true } },
   ])("shows an unavailable state when $dependency fails", async ({ failure }) => {
@@ -141,6 +148,24 @@ describe("guided Reversibility Assessment", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Policy check unavailable");
     expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
+  });
+
+  it("records a policy block when Senso is unavailable and no cache exists", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({ failSenso: true, recordId: "blocked-senso-001" });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
+    expect(screen.getByText("blocked_by_policy")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Policy check unavailable: Senso retrieval failed and no valid cache exists",
+    );
+    expect(screen.getByText("blocked-senso-001")).toBeVisible();
+    expect(screen.getByText("0 snapshots retained")).toBeVisible();
   });
 
   it("does not recommend an Offer outside the Premium Limit", async () => {

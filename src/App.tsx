@@ -74,6 +74,11 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     );
     setLoading(false);
     if (result._tag === "err") {
+      if (result.error._tag === "NoEligibleOffer" && result.error.record !== undefined) {
+        setRecord(result.error.record);
+        setStage("record");
+        return;
+      }
       setError(result.error.message);
       return;
     }

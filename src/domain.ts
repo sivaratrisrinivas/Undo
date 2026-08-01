@@ -41,10 +41,30 @@ export type PolicyAssessment = {
 /** Dated official merchant text collected for an Offer. */
 export type EvidenceSnapshot = {
   readonly offerId: Offer["id"];
+  readonly merchant: string;
   readonly sourceUrl: string;
+  readonly scope: {
+    readonly kind: "product" | "category";
+    readonly value: string;
+  };
   readonly collectedAt: string;
   readonly exactText: string;
   readonly fingerprint: string;
+  readonly retrievedVia: "senso";
+  readonly retrievalState: "current" | "cached";
+};
+
+/** Human approval of extracted facts for one exact content fingerprint. */
+export type EvidenceReview = {
+  readonly fingerprint: string;
+  readonly approvedAt: string;
+  readonly policy: PolicyAssessment;
+};
+
+/** A complete Reviewed Evidence set retained for a temporary Senso outage. */
+export type ReviewedEvidenceCache = {
+  readonly snapshots: ReadonlyArray<EvidenceSnapshot>;
+  readonly reviews: ReadonlyArray<EvidenceReview>;
 };
 
 /** A Prava live-quote substitute used by this walking skeleton. */
@@ -59,6 +79,10 @@ export type AssessedOffer = {
   readonly offer: Offer;
   readonly policy: PolicyAssessment;
   readonly evidence: EvidenceSnapshot;
+  readonly evidenceReview: {
+    readonly state: "reviewed" | "unreviewed";
+    readonly reused: boolean;
+  };
   readonly checkoutQuote: CheckoutQuote;
   readonly rank: number | null;
   readonly eligible: boolean;
@@ -90,21 +114,26 @@ export type PremiumLimitParseResult =
 export type UndoRecord = {
   readonly id: string;
   readonly createdAt: string;
-  readonly outcome: "buyer_declined";
+  readonly outcome:
+    | "buyer_declined"
+    | "blocked_by_policy"
+    | "blocked_by_price"
+    | "purchase_unavailable";
   readonly product: Product;
-  readonly selectedMerchant: string;
-  readonly selectedSeller: string;
-  readonly confirmedCheckoutTotalInr: number;
+  readonly selectedMerchant: string | null;
+  readonly selectedSeller: string | null;
+  readonly confirmedCheckoutTotalInr: number | null;
   readonly premiumLimitInr: number;
   readonly destinationReference: string;
   readonly evidence: ReadonlyArray<EvidenceSnapshot>;
   readonly recommendation: {
     readonly rankedOfferIds: ReadonlyArray<Offer["id"]>;
-    readonly selectedOfferId: Offer["id"];
-    readonly selection: "ranking_winner" | "buyer_selected_tie";
+    readonly selectedOfferId: Offer["id"] | null;
+    readonly selection: "ranking_winner" | "buyer_selected_tie" | "none";
     readonly rankingRules: "remedy-ranking/1.0";
   };
   readonly authorizationState: "not_requested";
+  readonly blockingReason?: string;
   readonly assumptions: ReadonlyArray<string>;
   readonly versions: {
     readonly policySchema: "policy-schema/1.0";

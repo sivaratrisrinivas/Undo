@@ -2,6 +2,7 @@ import type {
   CheckoutQuote,
   EvidenceSnapshot,
   PolicyAssessment,
+  ReviewedEvidenceCache,
 } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
 
@@ -21,27 +22,39 @@ export type FakeAdapters = AssessmentAdapters & {
 const evidence: ReadonlyArray<EvidenceSnapshot> = [
   {
     offerId: "headphone-zone",
+    merchant: "Headphone Zone",
     sourceUrl: "https://www.headphonezone.in/pages/returns-refunds",
+    scope: { kind: "product", value: "Sennheiser HD 560S" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:
       "Eligible products may be returned for a refund within 7 days of delivery when sealed and unopened in the original packaging.",
     fingerprint: "sha256:hpz-demo-v1",
+    retrievedVia: "senso",
+    retrievalState: "current",
   },
   {
     offerId: "concept-kart",
+    merchant: "Concept Kart",
     sourceUrl: "https://conceptkart.com/pages/refund-policy",
+    scope: { kind: "category", value: "Headphones" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:
       "A manufacturing defect reported within 7 days of delivery is eligible for replacement after verification.",
     fingerprint: "sha256:ck-demo-v1",
+    retrievedVia: "senso",
+    retrievalState: "current",
   },
   {
     offerId: "flipkart",
+    merchant: "Flipkart",
     sourceUrl: "https://www.flipkart.com/pages/returnpolicy",
+    scope: { kind: "category", value: "Headphones" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:
       "This category has a 7-day replacement policy for damaged, defective, or wrong products.",
     fingerprint: "sha256:fk-demo-v1",
+    retrievedVia: "senso",
+    retrievalState: "current",
   },
 ];
 
@@ -102,6 +115,51 @@ export function createFakeAdapters(options?: {
     pravaQuoteRequests: 0,
     pravaCheckoutRequests: 0,
   };
+  const scenarioPolicies = () =>
+    options?.scenario === "exchange"
+      ? policies.map((policy) =>
+          policy.offerId === "headphone-zone"
+            ? {
+                ...policy,
+                changeOfMind: "store_credit" as const,
+                productCondition: "trial_allowed" as const,
+                remedyWindow: {
+                  days: 10,
+                  startsAt: "delivered" as const,
+                  requiredAction: "request_submitted" as const,
+                },
+                returnTransport: "doorstep_pickup" as const,
+                reversalCost: { kind: "explicit_none" as const },
+                materialConditions: [],
+              }
+            : policy,
+        )
+      : options?.scenario === "tied"
+        ? policies.map((policy) =>
+            policy.offerId === "concept-kart"
+              ? {
+                  ...policy,
+                  changeOfMind: "money_back" as const,
+                  defect: "none" as const,
+                  productCondition: "unopened_only" as const,
+                  returnTransport: "self_ship" as const,
+                  reversalCost: { kind: "unstated" as const },
+                  materialConditions: ["Product must remain sealed and unopened."],
+                }
+              : policy,
+          )
+        : policies;
+  const reviewByFingerprint = new Map(
+    evidence.map((snapshot, index) => [
+      snapshot.fingerprint,
+      {
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T11:00:00.000Z",
+        policy: scenarioPolicies()[index]!,
+      },
+    ]),
+  );
+  let cache: ReviewedEvidenceCache | undefined;
 
   return {
     activity,
@@ -134,41 +192,7 @@ export function createFakeAdapters(options?: {
             },
           });
         }
-        const scenarioPolicies =
-          options?.scenario === "exchange"
-            ? policies.map((policy) =>
-                policy.offerId === "headphone-zone"
-                  ? {
-                      ...policy,
-                      changeOfMind: "store_credit" as const,
-                      productCondition: "trial_allowed" as const,
-                      remedyWindow: {
-                        days: 10,
-                        startsAt: "delivered" as const,
-                        requiredAction: "request_submitted" as const,
-                      },
-                      returnTransport: "doorstep_pickup" as const,
-                      reversalCost: { kind: "explicit_none" as const },
-                      materialConditions: [],
-                    }
-                  : policy,
-              )
-            : options?.scenario === "tied"
-            ? policies.map((policy) =>
-                policy.offerId === "concept-kart"
-                  ? {
-                      ...policy,
-                      changeOfMind: "money_back" as const,
-                      defect: "none" as const,
-                      productCondition: "unopened_only" as const,
-                      returnTransport: "self_ship" as const,
-                      reversalCost: { kind: "unstated" as const },
-                      materialConditions: ["Product must remain sealed and unopened."],
-                    }
-                  : policy,
-              )
-            : policies;
-        return Promise.resolve({ _tag: "ok" as const, value: scenarioPolicies });
+        return Promise.resolve({ _tag: "ok" as const, value: scenarioPolicies() });
       },
     },
     prava: {
@@ -202,6 +226,22 @@ export function createFakeAdapters(options?: {
             cause: new Error("Checkout is outside the decline-path skeleton"),
           },
         });
+      },
+    },
+    evidence: {
+      findReview(fingerprint) {
+        return Promise.resolve(reviewByFingerprint.get(fingerprint));
+      },
+      saveReview(review) {
+        reviewByFingerprint.set(review.fingerprint, review);
+        return Promise.resolve();
+      },
+      loadCache() {
+        return Promise.resolve(cache);
+      },
+      saveCache(nextCache) {
+        cache = nextCache;
+        return Promise.resolve();
       },
     },
     now: () => options?.now ?? "2026-08-01T12:00:00.000Z",

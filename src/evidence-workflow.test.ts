@@ -1,0 +1,288 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  parsePremiumLimitInr,
+  SUPPORTED_OFFERS,
+  SUPPORTED_PRODUCT,
+  type CheckoutQuote,
+  type EvidenceReview,
+  type EvidenceSnapshot,
+  type Offer,
+  type PolicyAssessment,
+  type ReviewedEvidenceCache,
+} from "./domain";
+import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
+
+const collectedAt = "2026-08-02T08:00:00.000Z";
+
+function policyFor(offerId: Offer["id"]): PolicyAssessment {
+  return {
+    offerId,
+    changeOfMind: "money_back",
+    defect: "none",
+    productCondition: "opened_unused",
+    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    returnTransport: "self_ship",
+    reversalCost: { kind: "known", amountInr: 100 },
+    materialConditions: [],
+    quote: "Returns are accepted within 7 days of delivery.",
+  };
+}
+
+function snapshotFor(offer: Offer, fingerprint = `sha256:${offer.id}`): EvidenceSnapshot {
+  return {
+    offerId: offer.id,
+    merchant: offer.merchant,
+    sourceUrl: `${offer.url}/returns`,
+    scope: { kind: "product", value: "Sennheiser HD 560S" },
+    collectedAt,
+    exactText: "Returns are accepted within 7 days of delivery.",
+    fingerprint,
+    retrievedVia: "senso",
+    retrievalState: "current",
+  };
+}
+
+function premiumLimit() {
+  const result = parsePremiumLimitInr("2000");
+  if (result._tag === "err") throw new Error(result.message);
+  return result.value;
+}
+
+function adapters(
+  snapshots: ReadonlyArray<EvidenceSnapshot>,
+  policies: ReadonlyArray<PolicyAssessment>,
+  reviews: ReadonlyArray<EvidenceReview>,
+  options?: {
+    readonly failSenso?: boolean;
+    readonly cache?: ReviewedEvidenceCache;
+  },
+): AssessmentAdapters {
+  const reviewByFingerprint = new Map(reviews.map((review) => [review.fingerprint, review]));
+  return {
+    senso: {
+      retrieveEvidence: () =>
+        options?.failSenso === true
+          ? Promise.resolve({
+              _tag: "err",
+              error: {
+                _tag: "DependencyUnavailable",
+                dependency: "senso",
+                cause: "outage",
+              },
+            })
+          : Promise.resolve({ _tag: "ok", value: snapshots }),
+    },
+    openAi: { extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }) },
+    prava: {
+      quoteOffers: () =>
+        Promise.resolve({
+          _tag: "ok",
+          value: SUPPORTED_OFFERS.map(
+            (offer, index): CheckoutQuote => ({
+              offerId: offer.id,
+              totalInr: 14_000 + index * 100,
+              purchaseAvailable: true,
+            }),
+          ),
+        }),
+      submitCheckout: () =>
+        Promise.resolve({
+          _tag: "err",
+          error: { _tag: "DependencyUnavailable", dependency: "prava", cause: "not used" },
+        }),
+    },
+    evidence: {
+      findReview: (fingerprint) => Promise.resolve(reviewByFingerprint.get(fingerprint)),
+      saveReview: (review) => {
+        reviewByFingerprint.set(review.fingerprint, review);
+        return Promise.resolve();
+      },
+      loadCache: () => Promise.resolve(options?.cache),
+      saveCache: () => Promise.resolve(),
+    },
+    now: () => "2026-08-02T09:00:00.000Z",
+    nextRecordId: () => "evidence-record",
+  };
+}
+
+describe("Policy Evidence workflow", () => {
+  it("reuses human review for a fresh Senso retrieval with the same fingerprint", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index]!,
+      }),
+    );
+
+    const result = await new AssessmentWorkflow(adapters(snapshots, policies, reviews)).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result._tag).toBe("ok");
+    if (result._tag === "ok") {
+      expect(result.value.offers[0]).toMatchObject({
+        evidence: {
+          merchant: "Headphone Zone",
+          scope: { kind: "product", value: "Sennheiser HD 560S" },
+          retrievedVia: "senso",
+          retrievalState: "current",
+        },
+        evidenceReview: { state: "reviewed", reused: true },
+      });
+    }
+  });
+
+  it("blocks a changed fingerprint pending human review and creates an Undo Record", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint:
+          snapshot.offerId === "headphone-zone" ? "sha256:headphone-zone-old" : snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index]!,
+      }),
+    );
+
+    const result = await new AssessmentWorkflow(adapters(snapshots, policies, reviews)).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message: "Policy Evidence changed and requires human review",
+        record: { outcome: "blocked_by_policy", evidence: snapshots },
+      },
+    });
+  });
+
+  it("blocks Stale Evidence older than 24 hours and creates an Undo Record", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => ({
+      ...snapshotFor(offer),
+      collectedAt: "2026-08-01T08:59:59.999Z",
+    }));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index]!,
+      }),
+    );
+
+    const result = await new AssessmentWorkflow(adapters(snapshots, policies, reviews)).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message: "Stale Evidence must be refreshed before purchase",
+        record: { outcome: "blocked_by_policy" },
+      },
+    });
+  });
+
+  it("uses a fresh complete Reviewed Evidence cache during a Senso outage", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index]!,
+      }),
+    );
+    const cache = { snapshots, reviews };
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, reviews, { failSenso: true, cache }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result._tag).toBe("ok");
+    if (result._tag === "ok") {
+      expect(result.value.offers.every((offer) => offer.evidence.retrievalState === "cached")).toBe(
+        true,
+      );
+      expect(result.value.offers.every((offer) => offer.evidenceReview.state === "reviewed")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("blocks unavailable evidence and creates an Undo Record when no valid cache exists", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, [], { failSenso: true }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        message: "Policy check unavailable: Senso retrieval failed and no valid cache exists",
+        reason: "blocked_by_policy",
+        record: { outcome: "blocked_by_policy", evidence: [] },
+      },
+    });
+  });
+
+  it("blocks incomplete live evidence and creates an Undo Record", async () => {
+    const snapshots = SUPPORTED_OFFERS.slice(0, 2).map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+
+    const result = await new AssessmentWorkflow(adapters(snapshots, policies, [])).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        message: "Policy Evidence is incomplete for one or more Offers",
+        reason: "blocked_by_policy",
+        record: { outcome: "blocked_by_policy", evidence: snapshots },
+      },
+    });
+  });
+
+  it("lets a human approve extracted facts for one exact fingerprint", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.slice(1).map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index + 1]!,
+      }),
+    );
+    const workflow = new AssessmentWorkflow(adapters(snapshots, policies, reviews));
+
+    await workflow.approveEvidence(snapshots[0]!, policies[0]!);
+    const result = await workflow.assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+
+    expect(result._tag).toBe("ok");
+    if (result._tag === "ok") {
+      expect(result.value.offers[0]?.evidenceReview).toEqual({ state: "reviewed", reused: true });
+    }
+  });
+});

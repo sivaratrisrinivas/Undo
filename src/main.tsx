@@ -1,7 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { createBrowserEvidenceRepository } from "./adapters/browser-evidence-repository";
 import { createFakeAdapters } from "./adapters/fake-adapters";
+import { createSensoEvidenceAdapter } from "./adapters/senso-evidence";
 import { App } from "./App";
 
 const root = document.getElementById("root");
@@ -9,8 +11,18 @@ if (root === null) {
   throw new Error("Root element is missing");
 }
 
+const baseAdapters = createFakeAdapters();
+const adapters =
+  import.meta.env.VITE_EVIDENCE_MODE === "fake"
+    ? baseAdapters
+    : {
+        ...baseAdapters,
+        senso: createSensoEvidenceAdapter(),
+        evidence: createBrowserEvidenceRepository(localStorage),
+      };
+
 createRoot(root).render(
   <StrictMode>
-    <App adapters={createFakeAdapters()} />
+    <App adapters={adapters} />
   </StrictMode>,
 );
