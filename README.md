@@ -2,77 +2,72 @@
 
 Undo helps a buyer choose among equivalent product Offers by comparing the evidenced cost and uncertainty of reversing each purchase before payment.
 
-## Project status
+The MVP supports one Product: a new, black Sennheiser HD 560S in the standard retail package with an Indian warranty. It compares curated Offers from Headphone Zone, Concept Kart, and Flipkart seller BUZZINDIA. Unsupported Products and URLs stop before external work begins.
 
-The repository contains the first working vertical slice: a seven-stage Reversibility Assessment for the Sennheiser HD 560S. It covers Product input, buyer constraints, Offer comparison, Policy Evidence, Approval Summary, checkout decision, and a resulting Undo Record.
+Undo provides an evidence-based Reversibility Assessment. It does not guarantee that a merchant will accept a return or reimburse the buyer.
 
-The normal evidence path calls a same-origin `/api/policy-evidence` backend that owns the Senso API key and returns official-source documents. The browser fingerprints exact text, reuses human review only for that fingerprint, enforces the 24-hour freshness limit, and persists the last complete Reviewed Evidence cache. OpenAI extraction and Prava checkout remain deterministic adapters in this ticket.
+## Current capabilities
 
-## Supported demo scope
+- Guided seven-stage flow from Product input through the Undo Record.
+- Exact Product and Offer allowlisting for the supported demo scope.
+- Senso-backed retrieval of curated official Policy Evidence.
+- Evidence Snapshots containing exact wording, merchant, source URL, scope, collection time, and a SHA-256 content fingerprint.
+- Human approval tied to one exact fingerprint and its extracted facts and citations.
+- Reuse of unchanged reviews, with changed or unreviewed evidence blocking Purchase Authorization.
+- A 24-hour evidence freshness limit and visibly labelled Stale Evidence.
+- Fresh, complete Reviewed Evidence cache fallback during a Senso outage, labelled Cached Evidence.
+- Deterministic eligibility, Premium Limit, Remedy Ranking, and Tied Offer rules.
+- Material Warning acknowledgement before checkout can continue.
+- Secret-free Undo Records for buyer declines and policy blocks.
+- Deterministic fake OpenAI extraction and Prava quote/checkout adapters for the current development and test flow.
 
-- Product: Sennheiser HD 560S, new, black, standard retail package, India warranty region.
-- Inputs: the preset Product or one approved Headphone Zone, Concept Kart, or Flipkart Offer URL.
-- Unsupported Products and URLs stop before search, evidence, quote, or checkout work.
-- The buyer can inspect the comparison and evidence, acknowledge Material Warnings, decline before checkout, and receive an Undo Record with outcome `buyer_declined`.
+## Architecture
 
-Undo presents evidence and deterministic decision rules. It does not guarantee merchant behavior or describe a purchase as safe.
+The application is built with React, TypeScript, and Vite. `AssessmentWorkflow` coordinates narrow Senso, OpenAI, Prava, and evidence-repository interfaces, while ranking and purchase eligibility remain deterministic domain code.
 
-## Application shape
+The Vite development server exposes `POST /api/policy-evidence`. This server-only route queries Senso's `/org/search`, retains only configured official corpus content IDs, and returns exact source chunks to the workflow. The Senso API key never enters browser code.
 
-- React and TypeScript UI built with Vite.
-- A workflow module coordinates Product resolution, evidence retrieval, policy extraction, quotes, Remedy Ranking, and record creation.
-- External behavior is injected through typed Senso, OpenAI, and Prava adapter seams.
-- The Premium Limit is evaluated against the cheapest Purchase Available Equivalent Offer.
-- Tied Offers are presented without an arbitrary winner and require buyer selection.
-- Undo Records retain evidence, assumptions, recommendation and authorization state, outcome, and reproducibility versions without payment secrets or a full address.
+Policy Evidence is purchase-eligible only when all required Offers have applicable official sources, every extracted fact has an exact citation, the content fingerprint has human approval, and the snapshot is no more than 24 hours old. Missing, incomplete, stale, changed, or invalid cached evidence produces a clear policy block and an Undo Record.
 
-## Run locally
+## Local setup
+
+Install dependencies:
 
 ```sh
 npm install
-npm run dev
 ```
 
-Open the local URL printed by Vite.
-
-The Vite development server implements `POST /api/policy-evidence`. Its request body contains only the supported Product identity. The server queries Senso's `/org/search`, keeps only configured corpus content IDs, and returns:
-
-```json
-{
-  "documents": [
-    {
-      "offerId": "headphone-zone",
-      "merchant": "Headphone Zone",
-      "sourceUrl": "https://www.headphonezone.in/pages/returns-refunds",
-      "scope": { "kind": "product", "value": "Sennheiser HD 560S" },
-      "collectedAt": "2026-08-02T08:00:00.000Z",
-      "exactText": "Exact official wording"
-    }
-  ]
-}
-```
-
-Configure the server-only environment variables below. Each content-ID value is a comma-separated list of the official documents ingested into Senso for that merchant:
+Create `.env.local` in the repository root:
 
 ```sh
-SENSO_API_KEY=...
+SENSO_API_KEY=your_senso_api_key
 SENSO_HEADPHONE_ZONE_CONTENT_IDS=uuid-1,uuid-2
 SENSO_CONCEPT_KART_CONTENT_IDS=uuid-3,uuid-4
 SENSO_FLIPKART_CONTENT_IDS=uuid-5,uuid-6
 ```
 
-Never expose the Senso key through a `VITE_` variable. A production host must route the same endpoint to `retrievePolicyEvidenceFromSenso`; Vite's middleware supplies it during local development. To run the deterministic local walking skeleton without Senso, use:
+Each content-ID variable is a comma-separated list of official merchant documents already ingested into Senso. Keep the API key server-side and never use a `VITE_` prefix for it. Local environment files are ignored by Git.
+
+Start the Senso-backed development flow:
+
+```sh
+npm run dev
+```
+
+To run the deterministic walking skeleton without Senso:
 
 ```sh
 VITE_EVIDENCE_MODE=fake npm run dev
 ```
 
+A production host must route `/api/policy-evidence` to `retrievePolicyEvidenceFromSenso`; Vite supplies this route only during local development.
+
 ## Verification
 
 ```sh
+npm test
 npm run typecheck
 npm run lint
-npm test
 npm run build
 ```
 
