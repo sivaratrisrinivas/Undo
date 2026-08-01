@@ -23,10 +23,11 @@ function policyFor(offerId: Offer["id"]): PolicyAssessment {
     changeOfMind: "money_back",
     defect: "none",
     productCondition: "opened_unused",
-    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "self_ship",
     reversalCost: { kind: "known", amountInr: 100 },
     materialConditions: [],
+    supplementaryRemedies: [],
     quote: "Returns are accepted within 7 days of delivery.",
     citations: ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
       (fact) => ({
@@ -65,6 +66,7 @@ function adapters(
   reviews: ReadonlyArray<EvidenceReview>,
   options?: {
     readonly failSenso?: boolean;
+    readonly failOpenAi?: boolean;
     readonly cache?: ReviewedEvidenceCache;
   },
 ): AssessmentAdapters {
@@ -83,7 +85,20 @@ function adapters(
             })
           : Promise.resolve({ _tag: "ok", value: snapshots }),
     },
-    openAi: { extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }) },
+    openAi: {
+      modelVersion: () => "fake-openai/test",
+      extractPolicies: () =>
+        options?.failOpenAi === true
+          ? Promise.resolve({
+              _tag: "err",
+              error: {
+                _tag: "DependencyUnavailable",
+                dependency: "openai",
+                cause: "outage",
+              },
+            })
+          : Promise.resolve({ _tag: "ok", value: policies }),
+    },
     prava: {
       quoteOffers: () =>
         Promise.resolve({
@@ -117,6 +132,62 @@ function adapters(
 }
 
 describe("Policy Evidence workflow", () => {
+  it("creates a blocked Undo Record naming OpenAI when extraction fails without a valid cache", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, [], { failOpenAi: true }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message:
+          "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
+        record: {
+          outcome: "blocked_by_policy",
+          evidence: snapshots,
+          blockingReason:
+            "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
+        },
+      },
+    });
+  });
+
+  it("uses only a matching Reviewed Evidence cache when OpenAI extraction is unavailable", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map((snapshot, index): EvidenceReview => {
+      const policy = policies[index];
+      if (policy === undefined) throw new Error("Expected policy fixture");
+      return {
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy,
+      };
+    });
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, [], {
+        failOpenAi: true,
+        cache: { snapshots, reviews },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "ok",
+      value: {
+        offers: [
+          { evidenceReview: { state: "reviewed", reused: true } },
+          { evidenceReview: { state: "reviewed", reused: true } },
+          { evidenceReview: { state: "reviewed", reused: true } },
+        ],
+      },
+    });
+  });
+
   it("reuses human review for a fresh Senso retrieval with the same fingerprint", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));

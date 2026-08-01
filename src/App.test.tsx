@@ -134,12 +134,9 @@ describe("guided Reversibility Assessment", () => {
     expect(adapters.activity.sensoRequests).toBe(0);
   });
 
-  it.each([
-    { dependency: "OpenAI", failure: { failOpenAi: true } },
-    { dependency: "Prava quote", failure: { failPravaQuote: true } },
-  ])("shows an unavailable state when $dependency fails", async ({ failure }) => {
+  it("shows an unavailable state when the Prava quote fails", async () => {
     const user = userEvent.setup();
-    const adapters = createFakeAdapters(failure);
+    const adapters = createFakeAdapters({ failPravaQuote: true });
 
     render(<App adapters={adapters} />);
 
@@ -148,6 +145,24 @@ describe("guided Reversibility Assessment", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Policy check unavailable");
     expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
+  });
+
+  it("records the failed OpenAI extraction step instead of using model memory", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({ failOpenAi: true, recordId: "blocked-openai-001" });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
+    expect(screen.getByText("Policy blocked")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
+    );
+    expect(screen.getByText("blocked-openai-001")).toBeVisible();
+    expect(adapters.activity.pravaCheckoutRequests).toBe(0);
   });
 
   it("records a policy block when Senso is unavailable and no cache exists", async () => {

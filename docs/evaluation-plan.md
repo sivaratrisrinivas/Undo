@@ -2,6 +2,12 @@
 
 ## Policy extraction gold set
 
+The executable frozen contract is in `src/evaluation/frozen-policy-answer-key.ts` and is scored by
+`npm run test:policy-contract`. Each of its 75 field instances passes only when the complete value,
+nested facts, source reference, and exact supporting quote pass together. The scorer separately
+enforces correct abstention, absence of unsupported return claims, and 100% field/citation
+correctness for the three demo Offers before its purchase gate opens.
+
 Before prompt tuning, a human reviewer freezes an answer key for the 15-document official evidence corpus. For every applicable policy fact, the answer key records:
 
 - the expected value for each of the five MVP policy fields and its nested facts;

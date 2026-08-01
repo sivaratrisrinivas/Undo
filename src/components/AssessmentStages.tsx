@@ -17,7 +17,7 @@ export function ComparisonStage(props: {
           <article className={offer.eligible ? "offer-row winner" : "offer-row"} key={offer.offer.id}>
             <div><span className="merchant">{offer.offer.merchant}</span><small>Seller: {offer.offer.seller}</small></div>
             <div><span className="cell-label">Confirmed total</span><strong>₹{offer.checkoutQuote.totalInr.toLocaleString("en-IN")}</strong></div>
-            <div><span className="cell-label">Change of mind</span><strong>{offer.policy.changeOfMind === "money_back" ? "Money back" : "Not evidenced"}</strong></div>
+            <div><span className="cell-label">Change of mind</span><strong>{{ money_back: "Money back", store_credit: "Store credit", none: "None evidenced", unclear: "Policy Unclear" }[offer.policy.changeOfMind]}</strong></div>
             <div><span className="cell-label">Assessment</span><strong>{offer.explanation}</strong></div>
           </article>
         ))}
@@ -92,8 +92,8 @@ export function ApprovalStage(props: {
   const transport = policy.returnTransport === "doorstep_pickup" ? "Doorstep pickup" : "Self-ship";
   const cost = policy.reversalCost.kind === "explicit_none" ? "₹0 evidenced" : policy.reversalCost.kind === "known" ? `₹${policy.reversalCost.amountInr.toLocaleString("en-IN")}` : "No fee stated—cost uncertain";
   const warnings = [
-    ...policy.materialConditions,
-    ...(policy.reversalCost.kind === "unstated" ? ["No fee stated—cost uncertain."] : []),
+    ...policy.materialConditions.map((condition) => condition.detail),
+    ...(policy.reversalCost.kind === "none_stated" ? ["No fee stated—cost uncertain."] : []),
   ];
   const warningsAcknowledged = warnings.every((warning) => props.acknowledgedWarnings.has(warning));
   return (

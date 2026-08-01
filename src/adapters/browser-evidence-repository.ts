@@ -1,4 +1,4 @@
-import type { EvidenceReview, EvidenceSnapshot, PolicyAssessment, ReviewedEvidenceCache } from "../domain";
+import type { EvidenceReview, EvidenceSnapshot, PolicyAssessment } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
 import { fingerprintEvidenceText } from "./senso-evidence";
 
@@ -47,14 +47,49 @@ function isPolicy(value: unknown): value is PolicyAssessment {
   const cost = policy.reversalCost as Record<string, unknown> | undefined;
   return (
     typeof policy.offerId === "string" &&
-    ["money_back", "store_credit", "none"].includes(String(policy.changeOfMind)) &&
-    ["replacement", "none"].includes(String(policy.defect)) &&
+    ["money_back", "store_credit", "none", "unclear"].includes(String(policy.changeOfMind)) &&
+    ["replacement", "money_back", "none", "unclear"].includes(String(policy.defect)) &&
     ["unopened_only", "opened_unused", "trial_allowed", "unclear"].includes(String(policy.productCondition)) &&
     ["doorstep_pickup", "self_ship", "unclear"].includes(String(policy.returnTransport)) &&
     Array.isArray(policy.materialConditions) &&
-    policy.materialConditions.every((condition) => typeof condition === "string") &&
+    policy.materialConditions.every((condition) => {
+      if (typeof condition !== "object" || condition === null) return false;
+      const entry = condition as Record<string, unknown>;
+      const citation = entry.citation as Record<string, unknown> | undefined;
+      return (
+        typeof entry.detail === "string" &&
+        typeof citation === "object" &&
+        citation !== null &&
+        typeof citation.quote === "string" &&
+        typeof citation.sourceUrl === "string"
+      );
+    }) &&
+    Array.isArray(policy.supplementaryRemedies) &&
+    policy.supplementaryRemedies.every((remedy) => {
+      if (typeof remedy !== "object" || remedy === null) return false;
+      const entry = remedy as Record<string, unknown>;
+      const citation = entry.citation as Record<string, unknown> | undefined;
+      return (
+        ["warranty", "pre_dispatch_cancellation", "refund_processing_timing"].includes(
+          String(entry.kind),
+        ) &&
+        typeof entry.detail === "string" &&
+        typeof citation === "object" &&
+        citation !== null &&
+        typeof citation.quote === "string" &&
+        typeof citation.sourceUrl === "string"
+      );
+    }) &&
     typeof policy.quote === "string" &&
     Array.isArray(policy.citations) &&
+    policy.citations.length === 5 &&
+    new Set(
+      policy.citations.map((citation) =>
+        typeof citation === "object" && citation !== null
+          ? String((citation as Record<string, unknown>).fact)
+          : "",
+      ),
+    ).size === 5 &&
     policy.citations.every((citation) => {
       if (typeof citation !== "object" || citation === null) return false;
       const entry = citation as Record<string, unknown>;
@@ -66,12 +101,20 @@ function isPolicy(value: unknown): value is PolicyAssessment {
     }) &&
     typeof window === "object" &&
     window !== null &&
-    typeof window.days === "number" &&
-    window.startsAt === "delivered" &&
-    window.requiredAction === "request_submitted" &&
+    ((window.kind === "known" &&
+      typeof window.days === "number" &&
+      ["ordered", "purchased", "delivered"].includes(String(window.startsAt)) &&
+      ["request_submitted", "item_shipped", "item_received"].includes(
+        String(window.requiredAction),
+      )) ||
+      (window.kind === "unclear" &&
+        window.days === null &&
+        window.startsAt === null &&
+        window.requiredAction === null)) &&
     typeof cost === "object" &&
     cost !== null &&
-    ["explicit_none", "known", "unstated", "unpriced_required", "unclear"].includes(String(cost.kind))
+    ["explicit_none", "known", "none_stated", "unpriced_required", "unclear"].includes(String(cost.kind)) &&
+    (cost.kind === "known" ? typeof cost.amountInr === "number" : cost.amountInr === undefined)
   );
 }
 

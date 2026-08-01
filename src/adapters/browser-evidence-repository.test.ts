@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { EvidenceReview, EvidenceSnapshot, ReviewedEvidenceCache } from "../domain";
+import type {
+  EvidenceReview,
+  EvidenceSnapshot,
+  PolicyAssessment,
+  ReviewedEvidenceCache,
+} from "../domain";
 import { createBrowserEvidenceRepository } from "./browser-evidence-repository";
 import { fingerprintEvidenceText } from "./senso-evidence";
 
@@ -17,12 +22,28 @@ describe("browser evidence repository", () => {
         changeOfMind: "money_back",
         defect: "none",
         productCondition: "unopened_only",
-        remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+        remedyWindow: { kind: "known" as const, days: 7, startsAt: "delivered" as const, requiredAction: "request_submitted" as const },
         returnTransport: "self_ship",
-        reversalCost: { kind: "unstated" },
-        materialConditions: ["Keep the Product sealed."],
-        quote: "Return within 7 days when sealed.",
-        citations: [],
+        reversalCost: { kind: "none_stated" },
+        materialConditions: [
+          {
+            detail: "Keep the Product sealed.",
+            citation: { quote: "Policy text", sourceUrl: "https://merchant.example/policy" },
+          },
+        ],
+        supplementaryRemedies: [],
+        quote: "Policy text",
+        citations: [
+          "remedy",
+          "window",
+          "product_condition",
+          "return_transport",
+          "buyer_paid_fees",
+        ].map((fact) => ({
+          fact: fact as PolicyAssessment["citations"][number]["fact"],
+          quote: "Policy text",
+          sourceUrl: "https://merchant.example/policy",
+        })),
       },
     } satisfies EvidenceReview;
     const cache = { snapshots: [], reviews: [review] } satisfies ReviewedEvidenceCache;

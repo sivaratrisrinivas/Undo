@@ -78,10 +78,19 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "money_back",
     defect: "none",
     productCondition: "unopened_only",
-    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "self_ship",
-    reversalCost: { kind: "unstated" },
-    materialConditions: ["Product must remain sealed and unopened."],
+    reversalCost: { kind: "none_stated" },
+    materialConditions: [
+      {
+        detail: "Product must remain sealed and unopened.",
+        citation: {
+          quote: "sealed and unopened in the original packaging",
+          sourceUrl: evidence[0]!.sourceUrl,
+        },
+      },
+    ],
+    supplementaryRemedies: [],
     quote:
       "Eligible products may be returned for a refund within 7 days of delivery when sealed and unopened in the original packaging.",
     citations: citationsFor(
@@ -94,10 +103,16 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "none",
     defect: "replacement",
     productCondition: "unclear",
-    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "unclear",
     reversalCost: { kind: "unclear" },
-    materialConditions: ["Manufacturing defect must be verified."],
+    materialConditions: [
+      {
+        detail: "Manufacturing defect must be verified.",
+        citation: { quote: "after verification", sourceUrl: evidence[1]!.sourceUrl },
+      },
+    ],
+    supplementaryRemedies: [],
     quote:
       "A manufacturing defect reported within 7 days of delivery is eligible for replacement after verification.",
     citations: citationsFor(
@@ -110,10 +125,19 @@ const policies: ReadonlyArray<PolicyAssessment> = [
     changeOfMind: "none",
     defect: "replacement",
     productCondition: "unclear",
-    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "doorstep_pickup",
-    reversalCost: { kind: "unstated" },
-    materialConditions: ["Only damaged, defective, or wrong Products qualify."],
+    reversalCost: { kind: "none_stated" },
+    materialConditions: [
+      {
+        detail: "Only damaged, defective, or wrong Products qualify.",
+        citation: {
+          quote: "damaged, defective, or wrong products",
+          sourceUrl: evidence[2]!.sourceUrl,
+        },
+      },
+    ],
+    supplementaryRemedies: [],
     quote:
       "This category has a 7-day replacement policy for damaged, defective, or wrong products.",
     citations: citationsFor(
@@ -154,6 +178,7 @@ export function createFakeAdapters(options?: {
                 changeOfMind: "store_credit" as const,
                 productCondition: "trial_allowed" as const,
                 remedyWindow: {
+                  kind: "known" as const,
                   days: 10,
                   startsAt: "delivered" as const,
                   requiredAction: "request_submitted" as const,
@@ -173,8 +198,8 @@ export function createFakeAdapters(options?: {
                   defect: "none" as const,
                   productCondition: "unopened_only" as const,
                   returnTransport: "self_ship" as const,
-                  reversalCost: { kind: "unstated" as const },
-                  materialConditions: ["Product must remain sealed and unopened."],
+                  reversalCost: { kind: "none_stated" as const },
+                  materialConditions: [],
                 }
               : policy,
           )
@@ -210,6 +235,7 @@ export function createFakeAdapters(options?: {
       },
     },
     openAi: {
+      modelVersion: () => "fake-openai/deterministic-1",
       extractPolicies() {
         activity.openAiRequests += 1;
         if (options?.failOpenAi === true) {

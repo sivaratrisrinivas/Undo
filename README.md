@@ -13,6 +13,9 @@ Undo provides an evidence-based Reversibility Assessment. It does not guarantee 
 - Senso-backed retrieval of curated official Policy Evidence.
 - Evidence Snapshots containing exact wording, merchant, source URL, scope, collection time, and a SHA-256 content fingerprint.
 - Human approval tied to one exact fingerprint and its extracted facts and citations.
+- Server-only OpenAI Responses API extraction with a strict five-field JSON Schema and exact-quote validation.
+- Separate display of change-of-mind, defect, warranty, pre-dispatch cancellation, and refund-processing facts.
+- A frozen 15-document extraction contract gate with all-or-nothing field and citation scoring.
 - Reuse of unchanged reviews, with changed or unreviewed evidence blocking Purchase Authorization.
 - A 24-hour evidence freshness limit and visibly labelled Stale Evidence.
 - Fresh, complete Reviewed Evidence cache fallback during a Senso outage, labelled Cached Evidence.
@@ -25,7 +28,7 @@ Undo provides an evidence-based Reversibility Assessment. It does not guarantee 
 
 The application is built with React, TypeScript, and Vite. `AssessmentWorkflow` coordinates narrow Senso, OpenAI, Prava, and evidence-repository interfaces, while ranking and purchase eligibility remain deterministic domain code.
 
-The Vite development server exposes `POST /api/policy-evidence`. This server-only route queries Senso's `/org/search`, retains only configured official corpus content IDs, and returns exact source chunks to the workflow. The Senso API key never enters browser code.
+The Vite development server exposes `POST /api/policy-evidence`. This server-only route queries Senso's `/org/search`, retains only configured official corpus content IDs, and returns exact source chunks to the workflow. `POST /api/policy-extraction` sends those snapshots through OpenAI structured output. The Senso and OpenAI API keys never enter browser code; buyer identity, destination, and payment data are excluded from both requests.
 
 Policy Evidence is purchase-eligible only when all required Offers have applicable official sources, every extracted fact has an exact citation, the content fingerprint has human approval, and the snapshot is no more than 24 hours old. Missing, incomplete, stale, changed, or invalid cached evidence produces a clear policy block and an Undo Record.
 
@@ -44,6 +47,9 @@ SENSO_API_KEY=your_senso_api_key
 SENSO_HEADPHONE_ZONE_CONTENT_IDS=uuid-1,uuid-2
 SENSO_CONCEPT_KART_CONTENT_IDS=uuid-3,uuid-4
 SENSO_FLIPKART_CONTENT_IDS=uuid-5,uuid-6
+OPENAI_API_KEY=your_openai_api_key
+# Optional; defaults to gpt-5.6
+OPENAI_POLICY_MODEL=gpt-5.6
 ```
 
 Each content-ID variable is a comma-separated list of official merchant documents already ingested into Senso. Keep the API key server-side and never use a `VITE_` prefix for it. Local environment files are ignored by Git.
@@ -66,6 +72,7 @@ A production host must route `/api/policy-evidence` to `retrievePolicyEvidenceFr
 
 ```sh
 npm test
+npm run test:policy-contract
 npm run typecheck
 npm run lint
 npm run build

@@ -31,10 +31,11 @@ function makePolicy(offerId: Offer["id"]): PolicyAssessment {
     changeOfMind: "money_back",
     defect: "none",
     productCondition: "opened_unused",
-    remedyWindow: { days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
+    remedyWindow: { kind: "known", days: 7, startsAt: "delivered", requiredAction: "request_submitted" },
     returnTransport: "self_ship",
     reversalCost: { kind: "known", amountInr: 100 },
     materialConditions: [],
+    supplementaryRemedies: [],
     quote: "Deterministic ranking test evidence.",
     citations: ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
       (fact) => ({
@@ -62,7 +63,10 @@ function makeAdapters(
   );
   return {
     senso: { retrieveEvidence: () => Promise.resolve({ _tag: "ok", value: snapshots }) },
-    openAi: { extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }) },
+    openAi: {
+      modelVersion: () => "fake-openai/test",
+      extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }),
+    },
     prava: {
       quoteOffers: () => Promise.resolve({ _tag: "ok", value: quotes }),
       submitCheckout: () =>
@@ -108,8 +112,8 @@ describe("Remedy Ranking", () => {
     },
     {
       rule: "longer Remedy Window",
-      left: { remedyWindow: { days: 8, startsAt: "delivered" as const, requiredAction: "request_submitted" as const } },
-      right: { remedyWindow: { days: 7, startsAt: "delivered" as const, requiredAction: "request_submitted" as const } },
+      left: { remedyWindow: { kind: "known" as const, days: 8, startsAt: "delivered" as const, requiredAction: "request_submitted" as const } },
+      right: { remedyWindow: { kind: "known" as const, days: 7, startsAt: "delivered" as const, requiredAction: "request_submitted" as const } },
     },
     {
       rule: "doorstep pickup over self-shipping",
@@ -119,7 +123,7 @@ describe("Remedy Ranking", () => {
     {
       rule: "lower evidenced Reversal Cost",
       left: { reversalCost: { kind: "explicit_none" as const } },
-      right: { reversalCost: { kind: "unstated" as const } },
+      right: { reversalCost: { kind: "none_stated" as const } },
     },
   ])("applies $rule before purchase price", async ({ left, right }) => {
     const policies = [

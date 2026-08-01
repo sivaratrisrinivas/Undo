@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { createBrowserEvidenceRepository } from "./adapters/browser-evidence-repository";
 import { createFakeAdapters } from "./adapters/fake-adapters";
+import { createOpenAiPolicyExtractionAdapter } from "./adapters/openai-policy-extraction";
 import { createSensoEvidenceAdapter } from "./adapters/senso-evidence";
 import { App } from "./App";
 
@@ -18,6 +19,7 @@ const adapters =
     : {
         ...baseAdapters,
         senso: createSensoEvidenceAdapter(),
+        openAi: createOpenAiPolicyExtractionAdapter(),
         evidence: createBrowserEvidenceRepository(localStorage),
       };
 

@@ -19,6 +19,7 @@ export type AssessmentAdapters = {
     retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
   };
   readonly openAi: {
+    modelVersion(): string;
     extractPolicies(
       evidence: ReadonlyArray<EvidenceSnapshot>,
     ): Promise<AdapterResult<ReadonlyArray<PolicyAssessment>>>;
@@ -77,6 +78,8 @@ type AssessmentResult =
 function isPolicyEligible(policy: PolicyAssessment): boolean {
   return (
     policy.changeOfMind !== "none" &&
+    policy.changeOfMind !== "unclear" &&
+    policy.remedyWindow.kind === "known" &&
     policy.productCondition !== "unclear" &&
     policy.returnTransport !== "unclear" &&
     policy.reversalCost.kind !== "unclear" &&
@@ -103,12 +106,13 @@ function compareEligibleOffers(
     Number(left.policy.productCondition === "trial_allowed");
   if (trialDifference !== 0) return trialDifference;
 
-  const remedyOrder = { money_back: 2, store_credit: 1, none: 0 } as const;
+  const remedyOrder = { money_back: 2, store_credit: 1, none: 0, unclear: 0 } as const;
   const remedyDifference =
     remedyOrder[right.policy.changeOfMind] - remedyOrder[left.policy.changeOfMind];
   if (remedyDifference !== 0) return remedyDifference;
 
-  const windowDifference = right.policy.remedyWindow.days - left.policy.remedyWindow.days;
+  const windowDifference =
+    (right.policy.remedyWindow.days ?? 0) - (left.policy.remedyWindow.days ?? 0);
   if (windowDifference !== 0) return windowDifference;
 
   const transportOrder = { doorstep_pickup: 2, self_ship: 1, unclear: 0 } as const;
@@ -170,7 +174,7 @@ export class AssessmentWorkflow {
     let evidence: ReadonlyArray<EvidenceSnapshot>;
     let policies: ReadonlyArray<PolicyAssessment>;
     let reviews: Map<string, EvidenceReview | undefined>;
-    const usingCache = evidenceResult._tag === "err";
+    let usingCache = evidenceResult._tag === "err";
 
     if (evidenceResult._tag === "err") {
       const cache = await this.adapters.evidence.loadCache(product);
@@ -202,24 +206,49 @@ export class AssessmentWorkflow {
       }
       const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
       if (policiesResult._tag === "err") {
-        return {
-          _tag: "err",
-          error: {
-            _tag: "AssessmentUnavailable",
-            message: "Policy check unavailable",
-            cause: policiesResult.error,
-          },
-        };
+        const cache = await this.adapters.evidence.loadCache(product);
+        const cacheMatchesCurrentEvidence =
+          cache !== undefined &&
+          this.hasCompleteEvidence(cache.snapshots) &&
+          evidence.every((snapshot) =>
+            cache.snapshots.some(
+              (cached) =>
+                cached.offerId === snapshot.offerId &&
+                cached.fingerprint === snapshot.fingerprint &&
+                cached.exactText === snapshot.exactText,
+            ),
+          ) &&
+          cache.reviews.every((review) =>
+            evidence.some(
+              (snapshot) =>
+                snapshot.fingerprint === review.fingerprint &&
+                this.isApplicableReview(snapshot, review),
+            ),
+          ) &&
+          cache.reviews.length === evidence.length;
+        if (!cacheMatchesCurrentEvidence || cache === undefined) {
+          return this.policyBlock(
+            product,
+            premiumLimitInr,
+            destinationReference,
+            evidence,
+            "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
+          );
+        }
+        policies = cache.reviews.map((review) => review.policy);
+        reviews = new Map(cache.reviews.map((review) => [review.fingerprint, review]));
+        usingCache = true;
+      } else {
+        policies = policiesResult.value;
+        reviews = new Map(
+          await Promise.all(
+            evidence.map(async (snapshot) => [
+              snapshot.fingerprint,
+              await this.adapters.evidence.findReview(snapshot.fingerprint),
+            ] as const),
+          ),
+        );
       }
-      policies = policiesResult.value;
-      reviews = new Map(
-        await Promise.all(
-          evidence.map(async (snapshot) => [
-            snapshot.fingerprint,
-            await this.adapters.evidence.findReview(snapshot.fingerprint),
-          ] as const),
-        ),
-      );
     }
 
     if (!this.hasCompleteEvidence(evidence)) {
@@ -422,7 +451,7 @@ export class AssessmentWorkflow {
       versions: {
         policySchema: "policy-schema/1.0",
         extractionPrompt: "policy-extraction/1.0",
-        model: "fake-openai/deterministic-1",
+        model: this.adapters.openAi.modelVersion(),
         rankingRules: "remedy-ranking/1.0",
       },
     };
@@ -473,7 +502,7 @@ export class AssessmentWorkflow {
       "return_transport",
       "buyer_paid_fees",
     ];
-    return requiredFacts.every((fact) => {
+    const hasRequiredCitations = requiredFacts.every((fact) => {
       const citations = policy.citations.filter((citation) => citation.fact === fact);
       const citation = citations[0];
       return (
@@ -484,6 +513,29 @@ export class AssessmentWorkflow {
         snapshot.exactText.includes(citation.quote)
       );
     });
+    const hasExactCitation = (citation: { readonly quote: string; readonly sourceUrl: string }) =>
+      citation.sourceUrl === snapshot.sourceUrl &&
+      citation.quote.trim() !== "" &&
+      snapshot.exactText.includes(citation.quote);
+    const remedyCitation = policy.citations.find((citation) => citation.fact === "remedy");
+    const hasValidWindow =
+      (policy.remedyWindow.kind === "known" &&
+        policy.remedyWindow.days !== null &&
+        policy.remedyWindow.days > 0 &&
+        policy.remedyWindow.startsAt !== null &&
+        policy.remedyWindow.requiredAction !== null) ||
+      (policy.remedyWindow.kind === "unclear" &&
+        policy.remedyWindow.days === null &&
+        policy.remedyWindow.startsAt === null &&
+        policy.remedyWindow.requiredAction === null);
+    return (
+      hasRequiredCitations &&
+      remedyCitation !== undefined &&
+      policy.quote === remedyCitation.quote &&
+      hasValidWindow &&
+      policy.materialConditions.every((condition) => hasExactCitation(condition.citation)) &&
+      policy.supplementaryRemedies.every((remedy) => hasExactCitation(remedy.citation))
+    );
   }
 
   private policyBlock(
@@ -548,7 +600,7 @@ export class AssessmentWorkflow {
       versions: {
         policySchema: "policy-schema/1.0",
         extractionPrompt: "policy-extraction/1.0",
-        model: "fake-openai/deterministic-1",
+        model: this.adapters.openAi.modelVersion(),
         rankingRules: "remedy-ranking/1.0",
       },
     };

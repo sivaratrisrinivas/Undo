@@ -5,8 +5,14 @@ function policyFacts(policy: PolicyAssessment) {
     money_back: "Change-of-Mind Return",
     store_credit: "Change-of-Mind Exchange",
     none: "No change-of-mind remedy",
+    unclear: "Change-of-mind remedy unclear",
   }[policy.changeOfMind];
-  const defect = { replacement: "Replacement", none: "No defect remedy" }[policy.defect];
+  const defect = {
+    replacement: "Replacement",
+    money_back: "Defect refund",
+    none: "No defect remedy",
+    unclear: "Defect remedy unclear",
+  }[policy.defect];
   const condition = {
     unopened_only: "Sealed and unopened",
     opened_unused: "Opened but unused",
@@ -23,13 +29,16 @@ function policyFacts(policy: PolicyAssessment) {
       ? `₹${policy.reversalCost.amountInr} Reversal Cost`
       : {
           explicit_none: "Explicit ₹0 Reversal Cost",
-          unstated: "Unstated Cost",
+          none_stated: "Unstated Cost",
           unpriced_required: "Unpriced Required Cost",
           unclear: "Policy Unclear",
         }[policy.reversalCost.kind];
   return {
     remedy: `${changeOfMind}; defect remedy: ${defect}`,
-    window: `${policy.remedyWindow.days} days from delivery; request must be submitted`,
+    window:
+      policy.remedyWindow.kind === "known"
+        ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}; ${policy.remedyWindow.requiredAction?.replaceAll("_", " ")}`
+        : "Policy Unclear",
     product_condition: condition,
     return_transport: transport,
     buyer_paid_fees: cost,
@@ -74,6 +83,25 @@ export function EvidenceCard(props: {
               <small>{snapshot.scope.kind}: {snapshot.scope.value} · {new Date(snapshot.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {stateLabel}</small>
             </div>
           ))}
+          {policy.materialConditions.map((condition) => (
+            <div className="evidence-fact" key={condition.detail}>
+              <strong>Remedy Condition: {condition.detail}</strong>
+              <blockquote>“{condition.citation.quote}”</blockquote>
+              <a href={condition.citation.sourceUrl}>{condition.citation.sourceUrl} <span aria-hidden="true">↗</span></a>
+            </div>
+          ))}
+          {policy.supplementaryRemedies.length > 0 && (
+            <div className="supplementary-remedies">
+              <h4>Separate policy information (does not establish reversibility)</h4>
+              {policy.supplementaryRemedies.map((remedy) => (
+                <div className="evidence-fact" key={`${remedy.kind}:${remedy.detail}`}>
+                  <strong>{remedy.kind.replaceAll("_", " ")}: {remedy.detail}</strong>
+                  <blockquote>“{remedy.citation.quote}”</blockquote>
+                  <a href={remedy.citation.sourceUrl}>{remedy.citation.sourceUrl} <span aria-hidden="true">↗</span></a>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </article>

@@ -7,7 +7,9 @@ describe("Senso Policy Evidence adapter", () => {
   it("retrieves official sources without sending buyer checkout data and fingerprints exact text", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetcher: typeof fetch = (url, init) => {
-      requests.push({ url: String(url), init: init ?? {} });
+      const requestUrl =
+        typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+      requests.push({ url: requestUrl, init: init ?? {} });
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -33,8 +35,10 @@ describe("Senso Policy Evidence adapter", () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe("/api/policy-evidence");
-    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({ product: SUPPORTED_PRODUCT });
-    expect(String(requests[0]?.init.body)).not.toMatch(/destination|address|phone|payment/i);
+    const requestBody = requests[0]?.init.body;
+    if (typeof requestBody !== "string") throw new Error("Expected a JSON request body");
+    expect(JSON.parse(requestBody)).toEqual({ product: SUPPORTED_PRODUCT });
+    expect(requestBody).not.toMatch(/destination|address|phone|payment/i);
     expect(result).toMatchObject({
       _tag: "ok",
       value: [

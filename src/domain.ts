@@ -19,22 +19,41 @@ export type Offer = {
 /** Policy facts extracted from an Evidence Snapshot. */
 export type PolicyAssessment = {
   readonly offerId: Offer["id"];
-  readonly changeOfMind: "money_back" | "store_credit" | "none";
-  readonly defect: "replacement" | "none";
+  readonly changeOfMind: "money_back" | "store_credit" | "none" | "unclear";
+  readonly defect: "replacement" | "money_back" | "none" | "unclear";
   readonly productCondition: "unopened_only" | "opened_unused" | "trial_allowed" | "unclear";
   readonly remedyWindow: {
-    readonly days: number;
-    readonly startsAt: "delivered";
-    readonly requiredAction: "request_submitted";
+    readonly kind: "known" | "unclear";
+    readonly days: number | null;
+    readonly startsAt: "ordered" | "purchased" | "delivered" | null;
+    readonly requiredAction: "request_submitted" | "item_shipped" | "item_received" | null;
   };
   readonly returnTransport: "doorstep_pickup" | "self_ship" | "unclear";
   readonly reversalCost:
     | { readonly kind: "explicit_none" }
     | { readonly kind: "known"; readonly amountInr: number }
-    | { readonly kind: "unstated" }
+    | { readonly kind: "none_stated" }
     | { readonly kind: "unpriced_required" }
     | { readonly kind: "unclear" };
-  readonly materialConditions: ReadonlyArray<string>;
+  readonly materialConditions: ReadonlyArray<{
+    readonly detail: string;
+    readonly citation: {
+      readonly quote: string;
+      readonly sourceUrl: string;
+    };
+  }>;
+  readonly supplementaryRemedies: ReadonlyArray<{
+    readonly kind:
+      | "warranty"
+      | "pre_dispatch_cancellation"
+      | "refund_processing_timing";
+    readonly detail: string;
+    readonly citation: {
+      readonly quote: string;
+      readonly sourceUrl: string;
+    };
+  }>;
+  /** Primary remedy quote retained for the compact Approval Summary. */
   readonly quote: string;
   readonly citations: ReadonlyArray<{
     readonly fact:
@@ -148,7 +167,7 @@ export type UndoRecord = {
   readonly versions: {
     readonly policySchema: "policy-schema/1.0";
     readonly extractionPrompt: "policy-extraction/1.0";
-    readonly model: "fake-openai/deterministic-1";
+    readonly model: string;
     readonly rankingRules: "remedy-ranking/1.0";
   };
 };
