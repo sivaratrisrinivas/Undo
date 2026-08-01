@@ -92,6 +92,8 @@ export function createFakeAdapters(options?: {
   readonly now?: string;
   readonly recordId?: string;
   readonly failSenso?: boolean;
+  readonly failOpenAi?: boolean;
+  readonly failPravaQuote?: boolean;
   readonly scenario?: "default" | "exchange" | "tied";
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
@@ -122,6 +124,16 @@ export function createFakeAdapters(options?: {
     openAi: {
       extractPolicies() {
         activity.openAiRequests += 1;
+        if (options?.failOpenAi === true) {
+          return Promise.resolve({
+            _tag: "err" as const,
+            error: {
+              _tag: "DependencyUnavailable" as const,
+              dependency: "openai" as const,
+              cause: new Error("deterministic OpenAI failure"),
+            },
+          });
+        }
         const scenarioPolicies =
           options?.scenario === "exchange"
             ? policies.map((policy) =>
@@ -162,6 +174,16 @@ export function createFakeAdapters(options?: {
     prava: {
       quoteOffers() {
         activity.pravaQuoteRequests += 1;
+        if (options?.failPravaQuote === true) {
+          return Promise.resolve({
+            _tag: "err" as const,
+            error: {
+              _tag: "DependencyUnavailable" as const,
+              dependency: "prava" as const,
+              cause: new Error("deterministic Prava quote failure"),
+            },
+          });
+        }
         const scenarioQuotes =
           options?.scenario === "tied"
             ? quotes.map((quote) =>

@@ -126,9 +126,13 @@ describe("guided Reversibility Assessment", () => {
     expect(adapters.activity.sensoRequests).toBe(0);
   });
 
-  it("shows an unavailable state when an assessment dependency fails", async () => {
+  it.each([
+    { dependency: "Senso", failure: { failSenso: true } },
+    { dependency: "OpenAI", failure: { failOpenAi: true } },
+    { dependency: "Prava quote", failure: { failPravaQuote: true } },
+  ])("shows an unavailable state when $dependency fails", async ({ failure }) => {
     const user = userEvent.setup();
-    const adapters = createFakeAdapters({ failSenso: true });
+    const adapters = createFakeAdapters(failure);
 
     render(<App adapters={adapters} />);
 
