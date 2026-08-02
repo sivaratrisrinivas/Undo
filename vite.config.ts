@@ -1,5 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
@@ -17,6 +18,20 @@ import {
   quoteOffersWithPrava,
 } from "./src/adapters/prava-shopping-server.ts";
 import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_PRODUCT, type Product } from "./src/domain.ts";
+import {
+  createPipelineLogger,
+  errorLogDetails,
+  PIPELINE_TRACE_HEADER,
+  pipelineTraceIdFrom,
+} from "./src/pipeline-logging.ts";
+
+function loggerFor(request: IncomingMessage) {
+  const traceId = pipelineTraceIdFrom(
+    request.headers[PIPELINE_TRACE_HEADER.toLowerCase()],
+    randomUUID,
+  );
+  return createPipelineLogger({ traceId, scope: "server" });
+}
 
 function boundaryRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -64,6 +79,11 @@ function sensoEvidencePlugin(env: Record<string, string>): Plugin {
           next();
           return;
         }
+        const logger = loggerFor(request);
+        logger.log("senso.route", "started", {
+          apiKeyConfigured: (env.SENSO_API_KEY ?? "").trim() !== "",
+          configuredOfferCount: sources.filter((source) => source.kbNodeIds.length > 0).length,
+        });
         let body = "";
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
@@ -73,20 +93,25 @@ function sensoEvidencePlugin(env: Record<string, string>): Plugin {
               if (body.length > 1_000_000) throw new Error("Request is too large");
               const payload: unknown = JSON.parse(body);
               const product = parseProduct(boundaryRecord(payload).product);
+              logger.log("senso.request_validation", "succeeded", { productModel: product.model });
               const result = await retrievePolicyEvidenceFromSenso(product, {
                 apiKey: env.SENSO_API_KEY ?? "",
                 sources,
+                logger,
               });
               response.statusCode = 200;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify(result));
-            } catch {
+              logger.log("senso.route", "succeeded", { documentCount: result.documents.length });
+            } catch (cause: unknown) {
+              logger.log("senso.route", "failed", errorLogDetails(cause));
               response.statusCode = 503;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Policy evidence unavailable" }));
             }
           };
           handleRequest().catch((cause: unknown) => {
+            logger.log("senso.route", "failed", errorLogDetails(cause));
             response.statusCode = cause instanceof Error ? 503 : 500;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ error: "Policy evidence unavailable" }));
@@ -107,6 +132,12 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
           next();
           return;
         }
+        const logger = loggerFor(request);
+        const model = env.OPENAI_POLICY_MODEL || "gpt-5.6-sol";
+        logger.log("openai.route", "started", {
+          apiKeyConfigured: apiKey !== undefined,
+          model,
+        });
         let body = "";
         const abortController = new AbortController();
         request.on("aborted", () => abortController.abort());
@@ -115,7 +146,13 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
         request.on("end", () => {
           const handleRequest = async () => {
             if (body.length > 1_000_000) {
+              logger.log("openai.request_validation", "blocked", {
+                reason: "request_too_large",
+                maximumBytes: 1_000_000,
+              });
+              logger.log("openai.route", "blocked", { reason: "request_too_large" });
               response.statusCode = 413;
+              response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Request is too large" }));
               return;
             }
@@ -123,28 +160,40 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
             try {
               const payload: unknown = JSON.parse(body);
               evidence = parsePolicyEvidenceInput(boundaryRecord(payload).evidence);
+              logger.log("openai.request_validation", "succeeded", {
+                snapshotCount: evidence.length,
+                offers: evidence.map((snapshot) => snapshot.offerId),
+              });
             } catch (cause: unknown) {
+              logger.log("openai.request_validation", "failed", errorLogDetails(cause));
+              logger.log("openai.route", "blocked", { reason: "invalid_policy_evidence_request" });
               response.statusCode = cause instanceof SyntaxError ? 400 : 422;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Invalid Policy Evidence request" }));
               return;
             }
-            const model = env.OPENAI_POLICY_MODEL || "gpt-5.6-sol";
             const result = await extractPoliciesWithOpenAi(evidence, {
               apiKey,
               model,
               signal: abortController.signal,
+              logger,
             });
             response.setHeader("Content-Type", "application/json");
             if (result._tag === "err") {
+              logger.log("openai.route", "failed", {
+                errorKind: result.error.kind,
+                ...errorLogDetails(result.error.cause),
+              });
               response.statusCode = 503;
               response.end(JSON.stringify({ error: "Policy extraction unavailable" }));
               return;
             }
             response.statusCode = 200;
             response.end(JSON.stringify({ policies: result.value, model }));
+            logger.log("openai.route", "succeeded", { policyCount: result.value.length, model });
           };
           handleRequest().catch((cause: unknown) => {
+            logger.log("openai.route", "failed", errorLogDetails(cause));
             response.statusCode = cause instanceof Error ? 503 : 500;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ error: "Policy extraction unavailable" }));
@@ -164,13 +213,21 @@ function pravaCheckoutQuotesPlugin(): Plugin {
           next();
           return;
         }
+        const logger = loggerFor(request);
+        logger.log("prava.quotes_route", "started", {});
         let body = "";
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
         request.on("end", () => {
           const handleRequest = async () => {
             if (body.length > 100_000) {
+              logger.log("prava.quote_request_validation", "blocked", {
+                reason: "request_too_large",
+                maximumBytes: 100_000,
+              });
+              logger.log("prava.quotes_route", "blocked", { reason: "request_too_large" });
               response.statusCode = 413;
+              response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Request is too large" }));
               return;
             }
@@ -178,23 +235,37 @@ function pravaCheckoutQuotesPlugin(): Plugin {
             try {
               const payload: unknown = JSON.parse(body);
               input = parsePravaQuoteRequest(payload);
+              logger.log("prava.quote_request_validation", "succeeded", {
+                offerCount: input.offers.length,
+                destination: input.destinationReference === "destination-ref-prava-default"
+                  ? "default"
+                  : "opaque_custom",
+              });
             } catch (cause: unknown) {
+              logger.log("prava.quote_request_validation", "failed", errorLogDetails(cause));
+              logger.log("prava.quotes_route", "blocked", { reason: "invalid_quote_request" });
               response.statusCode = cause instanceof SyntaxError ? 400 : 422;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Invalid Prava quote request" }));
               return;
             }
-            const result = await quoteOffersWithPrava(input.offers, input.destinationReference);
+            const result = await quoteOffersWithPrava(input.offers, input.destinationReference, undefined, logger);
             response.setHeader("Content-Type", "application/json");
             if (result._tag === "err") {
+              logger.log("prava.quotes_route", "failed", errorLogDetails(result.error.cause));
               response.statusCode = 503;
               response.end(JSON.stringify({ error: "Checkout quotes unavailable" }));
               return;
             }
             response.statusCode = 200;
             response.end(JSON.stringify({ quotes: result.value }));
+            logger.log("prava.quotes_route", "succeeded", {
+              quoteCount: result.value.length,
+              purchaseAvailableCount: result.value.filter((quote) => quote.purchaseAvailable).length,
+            });
           };
-          handleRequest().catch(() => {
+          handleRequest().catch((cause: unknown) => {
+            logger.log("prava.quotes_route", "failed", errorLogDetails(cause));
             response.statusCode = 503;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ error: "Checkout quotes unavailable" }));
@@ -217,14 +288,27 @@ function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
           next();
           return;
         }
+        const logger = loggerFor(request);
+        logger.log("prava.authorization_route", "started", {});
         let body = "";
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
         request.on("end", () => {
           try {
-            if (body.length > 100_000) throw new Error("Request is too large");
+            if (body.length > 100_000) {
+              logger.log("prava.authorization_validation", "blocked", {
+                reason: "request_too_large",
+                maximumBytes: 100_000,
+              });
+              logger.log("prava.authorization_route", "blocked", { reason: "request_too_large" });
+              response.statusCode = 413;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: "Request is too large" }));
+              return;
+            }
             const payload: unknown = JSON.parse(body);
             const input = parsePravaCheckoutRequest(payload);
+            logger.log("prava.authorization_validation", "succeeded", { offerId: input.offer.id });
             if (
               Date.parse(input.expiresAt) <= Date.now() ||
               checkoutAuthorizations.has(input.authorizationId) ||
@@ -240,7 +324,10 @@ function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
             response.statusCode = 201;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ checkoutGrant }));
-          } catch {
+            logger.log("prava.authorization_route", "succeeded", { offerId: input.offer.id });
+          } catch (cause: unknown) {
+            logger.log("prava.authorization_validation", "failed", errorLogDetails(cause));
+            logger.log("prava.authorization_route", "blocked", { reason: "invalid_authorization" });
             response.statusCode = 422;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ error: "Invalid Purchase Authorization" }));
@@ -252,13 +339,23 @@ function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
           next();
           return;
         }
+        const logger = loggerFor(request);
+        logger.log("prava.checkout_route", "started", {
+          credentialConfigured: credentials !== undefined,
+        });
         let body = "";
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
         request.on("end", () => {
           const handleRequest = async () => {
             if (body.length > 100_000) {
+              logger.log("prava.checkout_request_validation", "blocked", {
+                reason: "request_too_large",
+                maximumBytes: 100_000,
+              });
+              logger.log("prava.checkout_route", "blocked", { reason: "request_too_large" });
               response.statusCode = 413;
+              response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Request is too large" }));
               return;
             }
@@ -278,7 +375,10 @@ function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
                 storedAuthorization.grant !== envelope.checkoutGrant ||
                 Date.parse(input.expiresAt) <= Date.now()
               ) throw new Error("Purchase Authorization unavailable");
+              logger.log("prava.checkout_request_validation", "succeeded", { offerId: input.offer.id });
             } catch (cause: unknown) {
+              logger.log("prava.checkout_request_validation", "failed", errorLogDetails(cause));
+              logger.log("prava.checkout_route", "blocked", { reason: "invalid_checkout_request" });
               response.statusCode = cause instanceof SyntaxError ? 400 : 409;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: "Invalid Prava checkout request" }));
@@ -286,12 +386,22 @@ function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
             }
             checkoutAuthorizations.delete(input.authorizationId);
             consumedAuthorizationIds.add(input.authorizationId);
-            const result = await checkoutWithPrava(input, credentials);
+            const result = await checkoutWithPrava(input, credentials, undefined, Date.now, logger);
             response.statusCode = 200;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ result }));
+            const routeStatus = result._tag === "not_submitted"
+              ? "blocked"
+              : result.paymentStatus === "successful" && result.merchantOrderIdentifier !== null
+                ? "succeeded"
+                : "failed";
+            logger.log("prava.checkout_route", routeStatus, {
+              result: result._tag,
+              paymentStatus: result._tag === "submitted" ? result.paymentStatus : "not_submitted",
+            });
           };
-          handleRequest().catch(() => {
+          handleRequest().catch((cause: unknown) => {
+            logger.log("prava.checkout_route", "failed", errorLogDetails(cause));
             response.statusCode = 503;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify({ error: "Checkout outcome unavailable" }));

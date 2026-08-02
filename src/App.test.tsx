@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT, type EvidenceReview, type ReviewedEvidenceCache } from "./domain";
+import { createPipelineLogger, type PipelineLogEntry } from "./pipeline-logging";
 
 async function assessAndAcknowledge(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
@@ -13,6 +14,40 @@ async function assessAndAcknowledge(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("guided Reversibility Assessment", () => {
+  it("traces first-screen validation failures before external work begins", async () => {
+    const user = userEvent.setup();
+    const baseAdapters = createFakeAdapters();
+    const entries: PipelineLogEntry[] = [];
+    const adapters = {
+      ...baseAdapters,
+      pipeline: {
+        nextTraceId: () => "trace-input-validation-1234",
+        logger: (traceId: string) => createPipelineLogger({
+          traceId,
+          scope: "browser",
+          sink: (entry) => { entries.push(entry); },
+        }),
+      },
+    };
+    render(<App adapters={adapters} />);
+
+    await user.clear(screen.getByRole("spinbutton", { name: "Premium Limit (₹)" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter a whole-number Premium Limit of ₹0 or more",
+    );
+    expect(entries).toContainEqual(expect.objectContaining({
+      traceId: "trace-input-validation-1234",
+      stage: "input_validation",
+      status: "failed",
+      details: { reason: "invalid_premium_limit" },
+    }));
+    expect(baseAdapters.activity.sensoRequests).toBe(0);
+    expect(baseAdapters.activity.openAiRequests).toBe(0);
+    expect(baseAdapters.activity.pravaQuoteRequests).toBe(0);
+  });
+
   it("lets a buyer assess the supported Product, decline checkout, and receive an Undo Record", async () => {
     const user = userEvent.setup();
     const adapters = createFakeAdapters({

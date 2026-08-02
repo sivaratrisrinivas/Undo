@@ -1,6 +1,7 @@
 import type { EvidenceSnapshot, PolicyAssessment } from "../domain";
 import type { AdapterResult, AssessmentAdapters } from "../workflow";
 import { parseExtractedPolicies } from "./openai-policy-extraction-server";
+import { pipelineTraceHeaders } from "../pipeline-logging";
 
 function extractionFrom(value: unknown, evidence: ReadonlyArray<EvidenceSnapshot>): {
   readonly policies: ReadonlyArray<PolicyAssessment>;
@@ -28,11 +29,12 @@ export function createOpenAiPolicyExtractionAdapter(options?: {
     modelVersion: () => modelVersion,
     async extractPolicies(
       evidence: ReadonlyArray<EvidenceSnapshot>,
+      traceId?: string,
     ): Promise<AdapterResult<ReadonlyArray<PolicyAssessment>>> {
       try {
         const response = await fetcher(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...pipelineTraceHeaders(traceId) },
           body: JSON.stringify({ evidence }),
         });
         if (!response.ok) throw new Error(`OpenAI extraction endpoint returned ${response.status}`);

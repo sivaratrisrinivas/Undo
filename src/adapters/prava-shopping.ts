@@ -5,6 +5,7 @@ import {
   type PravaCheckoutResult,
 } from "../domain";
 import type { AdapterResult, AssessmentAdapters } from "../workflow";
+import { pipelineTraceHeaders } from "../pipeline-logging";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -142,11 +143,15 @@ export function createPravaShoppingAdapter(options?: {
   const fetcher = options?.fetcher ?? fetch;
   const checkoutGrants = new Map<string, string>();
   return {
-    async quoteOffers(offers, destinationReference): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>> {
+    async quoteOffers(
+      offers,
+      destinationReference,
+      traceId,
+    ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>> {
       try {
         const response = await fetcher(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...pipelineTraceHeaders(traceId) },
           body: JSON.stringify({ offers, destinationReference }),
         });
         if (!response.ok) throw new Error(`Prava quote endpoint returned ${response.status}`);
@@ -165,11 +170,11 @@ export function createPravaShoppingAdapter(options?: {
         };
       }
     },
-    async registerCheckout(request) {
+    async registerCheckout(request, traceId) {
       try {
         const response = await fetcher(authorizationEndpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...pipelineTraceHeaders(traceId) },
           body: JSON.stringify(request),
         });
         if (response.status !== 201) return "unavailable";
@@ -182,7 +187,7 @@ export function createPravaShoppingAdapter(options?: {
         return "unavailable";
       }
     },
-    async submitCheckout(request) {
+    async submitCheckout(request, traceId) {
       const checkoutGrant = checkoutGrants.get(request.authorizationId);
       if (checkoutGrant === undefined) {
         return {
@@ -196,7 +201,7 @@ export function createPravaShoppingAdapter(options?: {
       try {
         const response = await fetcher(checkoutEndpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...pipelineTraceHeaders(traceId) },
           body: JSON.stringify({ request, checkoutGrant }),
         });
         if (response.status >= 400 && response.status < 500) {

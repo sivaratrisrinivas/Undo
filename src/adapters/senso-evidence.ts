@@ -5,6 +5,7 @@ import {
   type Product,
 } from "../domain";
 import type { AdapterResult, AssessmentAdapters } from "../workflow";
+import { pipelineTraceHeaders } from "../pipeline-logging";
 
 type SensoEvidenceDocument = Omit<
   EvidenceSnapshot,
@@ -70,7 +71,10 @@ export function createSensoEvidenceAdapter(options?: {
   const fetcher = options?.fetcher ?? fetch;
 
   return {
-    async retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>> {
+    async retrieveEvidence(
+      product: Product,
+      traceId?: string,
+    ): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>> {
       try {
         const productProjection: Product = {
           manufacturer: product.manufacturer,
@@ -82,7 +86,7 @@ export function createSensoEvidenceAdapter(options?: {
         };
         const response = await fetcher(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...pipelineTraceHeaders(traceId) },
           body: JSON.stringify({ product: productProjection }),
         });
         if (!response.ok) throw new Error(`Senso evidence endpoint returned ${response.status}`);

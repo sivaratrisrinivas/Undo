@@ -39,10 +39,16 @@ describe("Senso Policy Evidence adapter", () => {
       paymentData: "payment-data-canary",
       oneTimeCredential: "credential-canary",
     };
-    const result = await createSensoEvidenceAdapter({ fetcher }).retrieveEvidence(runtimeProduct);
+    const result = await createSensoEvidenceAdapter({ fetcher }).retrieveEvidence(
+      runtimeProduct,
+      "trace-senso-1234",
+    );
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe("/api/policy-evidence");
+    expect(new Headers(requests[0]?.init.headers).get("X-Undo-Trace-Id")).toBe(
+      "trace-senso-1234",
+    );
     const requestBody = requests[0]?.init.body;
     if (typeof requestBody !== "string") throw new Error("Expected a JSON request body");
     const parsedRequest: unknown = JSON.parse(requestBody) as unknown;

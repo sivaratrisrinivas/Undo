@@ -13,6 +13,7 @@ import { createSensoEvidenceAdapter } from "./adapters/senso-evidence";
 import { App } from "./App";
 import { officialEvidenceAppliesToSupportedProduct, type EvidenceSnapshot, type Product } from "./domain";
 import { POLICY_CONTRACT_RELEASE } from "./evaluation/policy-contract";
+import { createPipelineLogger } from "./pipeline-logging";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -44,6 +45,10 @@ const adapters =
         openAi: createOpenAiPolicyExtractionAdapter(),
         prava: createPravaShoppingAdapter(),
         evidence: createBrowserEvidenceRepository(localStorage),
+        pipeline: {
+          nextTraceId: () => crypto.randomUUID(),
+          logger: (traceId: string) => createPipelineLogger({ traceId, scope: "browser" }),
+        },
       };
 
 createRoot(root).render(

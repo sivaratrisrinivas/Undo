@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { parsePremiumLimitInr, SUPPORTED_PRODUCT } from "./domain";
 import { AssessmentWorkflow } from "./workflow";
+import { createPipelineLogger, type PipelineLogEntry } from "./pipeline-logging";
 
 function premiumLimit(value: string) {
   const result = parsePremiumLimitInr(value);
@@ -96,7 +97,7 @@ describe("checkout workflow", () => {
   });
 
   it("records outcome_unknown when Prava reports success without an order identifier", async () => {
-    const adapters = createFakeAdapters({
+    const baseAdapters = createFakeAdapters({
       checkoutResult: {
         _tag: "submitted",
         paymentStatus: "unknown",
@@ -105,6 +106,18 @@ describe("checkout workflow", () => {
         failureReason: "Prava reported successful payment without a merchant order identifier",
       },
     });
+    const entries: PipelineLogEntry[] = [];
+    const adapters = {
+      ...baseAdapters,
+      pipeline: {
+        nextTraceId: () => "trace-checkout-unknown-1234",
+        logger: (traceId: string) => createPipelineLogger({
+          traceId,
+          scope: "browser",
+          sink: (entry) => { entries.push(entry); },
+        }),
+      },
+    };
     const workflow = new AssessmentWorkflow(adapters);
 
     const result = await workflow.checkout(await authorizedCheckout(workflow));
@@ -117,6 +130,16 @@ describe("checkout workflow", () => {
         merchantOrderIdentifier: null,
       },
     });
+    expect(entries.some((entry) =>
+      entry.stage === "prava.checkout" &&
+      entry.status === "failed" &&
+      entry.details?.paymentStatus === "unknown"
+    )).toBe(true);
+    expect(entries).toContainEqual(expect.objectContaining({
+      stage: "checkout",
+      status: "failed",
+      details: { outcome: "outcome_unknown" },
+    }));
   });
 
   it("records a confirmed failure without retrying or reusing authorization", async () => {

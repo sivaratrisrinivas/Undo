@@ -5,6 +5,7 @@ import {
   type EvidenceSnapshot,
   type PolicyAssessment,
 } from "../domain.ts";
+import { errorLogDetails, type PipelineLogger } from "../pipeline-logging.ts";
 
 const citationSchema = {
   type: "object",
@@ -484,11 +485,20 @@ export async function extractPoliciesWithOpenAi(
     readonly fetcher?: typeof fetch;
     readonly model?: string;
     readonly signal?: AbortSignal;
+    readonly logger?: PipelineLogger;
   },
 ): Promise<OpenAiExtractionResult> {
   if (options.apiKey === undefined) {
+    options.logger?.log("openai.configuration", "failed", { reason: "api_key_missing" });
     return { _tag: "err", error: { kind: "configuration", cause: "OPENAI_API_KEY is not configured" } };
   }
+  const model = options.model ?? "gpt-5.6-sol";
+  options.logger?.log("openai.configuration", "succeeded", { model });
+  options.logger?.log("openai.responses_api", "started", {
+    model,
+    snapshotCount: evidence.length,
+    totalCharacters: evidence.reduce((total, snapshot) => total + snapshot.exactText.length, 0),
+  });
   const fetcher = options.fetcher ?? fetch;
   let response: Response;
   try {
@@ -499,7 +509,7 @@ export async function extractPoliciesWithOpenAi(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: options.model ?? "gpt-5.6-sol",
+        model,
         store: false,
         tools: [],
         input: [
@@ -530,19 +540,44 @@ export async function extractPoliciesWithOpenAi(
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError") {
+      options.logger?.log("openai.responses_api", "failed", {
+        errorKind: "cancelled",
+        ...errorLogDetails(cause),
+      });
       return { _tag: "err", error: { kind: "cancelled", cause } };
     }
+    options.logger?.log("openai.responses_api", "failed", {
+      errorKind: "transport",
+      ...errorLogDetails(cause),
+    });
     return { _tag: "err", error: { kind: "transport", cause } };
   }
+  const requestId = response.headers.get("x-request-id");
+  options.logger?.log("openai.responses_api", "info", {
+    httpStatus: response.status,
+    ...(requestId === null ? {} : { requestId }),
+  });
   if (!response.ok) {
+    options.logger?.log("openai.responses_api", "failed", {
+      errorKind: "api",
+      httpStatus: response.status,
+      ...(requestId === null ? {} : { requestId }),
+    });
     return { _tag: "err", error: { kind: "api", cause: response.status } };
   }
   try {
+    options.logger?.log("openai.output_validation", "started", { snapshotCount: evidence.length });
+    const policies = parseExtractedPolicies(JSON.parse(outputText(await response.json())), evidence);
+    options.logger?.log("openai.output_validation", "succeeded", { policyCount: policies.length });
     return {
       _tag: "ok",
-      value: parseExtractedPolicies(JSON.parse(outputText(await response.json())), evidence),
+      value: policies,
     };
   } catch (cause) {
+    options.logger?.log("openai.output_validation", "failed", {
+      errorKind: "invalid_output",
+      ...errorLogDetails(cause),
+    });
     return { _tag: "err", error: { kind: "invalid_output", cause } };
   }
 }

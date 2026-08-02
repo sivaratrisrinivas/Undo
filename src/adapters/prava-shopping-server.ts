@@ -11,6 +11,11 @@ import {
   type PravaCheckoutResult,
   type Product,
 } from "../domain.ts";
+import {
+  errorLogDetails,
+  type PipelineLogDetails,
+  type PipelineLogger,
+} from "../pipeline-logging.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,6 +25,21 @@ type CommandOutput = {
   readonly stderr: string;
   readonly timedOut?: boolean;
 };
+
+class PravaCommandError extends Error {
+  constructor(
+    readonly exitCode: number,
+    readonly timedOut: boolean,
+  ) {
+    super("Prava command failed");
+  }
+}
+
+function pravaErrorLogDetails(cause: unknown): PipelineLogDetails {
+  return cause instanceof PravaCommandError
+    ? { errorType: "PravaCommandError", exitCode: cause.exitCode, timedOut: cause.timedOut }
+    : errorLogDetails(cause);
+}
 
 type PravaQuoteResult =
   | { readonly _tag: "ok"; readonly value: ReadonlyArray<CheckoutQuote> }
@@ -285,7 +305,7 @@ async function runJson(
 ): Promise<unknown> {
   const result = await runner(args, timeoutMs);
   if (result.exitCode !== 0) {
-    throw new Error(`Prava CLI exited with status ${result.exitCode}`);
+    throw new PravaCommandError(result.exitCode, result.timedOut === true);
   }
   return parseJson(result.stdout);
 }
@@ -294,12 +314,16 @@ async function quoteOffer(
   offer: Offer,
   destinationReference: string,
   runner: PravaCommandRunner,
+  logger?: PipelineLogger,
 ): Promise<CheckoutQuote> {
+  logger?.log("prava.offer_quote", "started", { offerId: offer.id });
   const config = configFor(offer);
   if (config === undefined) {
+    logger?.log("prava.offer_quote", "blocked", { offerId: offer.id, reason: "catalog_not_configured" });
     return unavailableQuote(offer, "Prava returned no orderable listing for this merchant and seller", destinationReference);
   }
   try {
+    logger?.log("prava.product_lookup", "started", { offerId: offer.id });
     const productPayload = await runJson(
       runner,
       ["shop", "product", "--product-id", config.productId, "--merchant", config.merchantDomain, "--json"],
@@ -307,8 +331,13 @@ async function quoteOffer(
     );
     const verified = parseVerifiedVariant(productPayload, config);
     if (verified === undefined) {
+      logger?.log("prava.product_lookup", "failed", {
+        offerId: offer.id,
+        reason: "product_identity_or_availability_unverified",
+      });
       return unavailableQuote(offer, "Prava could not prove the exact Product identity and availability", destinationReference);
     }
+    logger?.log("prava.product_lookup", "succeeded", { offerId: offer.id });
     const quoteArgs = [
       "shop", "quote", "--variant-id", verified.variantId,
       "--merchant", config.merchantDomain,
@@ -317,10 +346,32 @@ async function quoteOffer(
     if (destinationReference !== "destination-ref-prava-default") {
       quoteArgs.push("--address-id", destinationReference);
     }
+    logger?.log("prava.checkout_quote", "started", { offerId: offer.id });
     const quotePayload = await runJson(runner, quoteArgs, 50_000);
-    return parseQuote(quotePayload, offer, config, destinationReference, verified.product)
-      ?? unavailableQuote(offer, "Prava returned an invalid or incomplete checkout quote", destinationReference, verified.product);
+    const quote = parseQuote(quotePayload, offer, config, destinationReference, verified.product);
+    if (quote === undefined) {
+      logger?.log("prava.checkout_quote", "failed", {
+        offerId: offer.id,
+        reason: "invalid_or_incomplete_quote",
+      });
+      return unavailableQuote(
+        offer,
+        "Prava returned an invalid or incomplete checkout quote",
+        destinationReference,
+        verified.product,
+      );
+    }
+    logger?.log("prava.checkout_quote", "succeeded", {
+      offerId: offer.id,
+      totalInr: quote.totalInr,
+    });
+    logger?.log("prava.offer_quote", "succeeded", { offerId: offer.id });
+    return quote;
   } catch (cause: unknown) {
+    logger?.log("prava.offer_quote", "failed", {
+      offerId: offer.id,
+      ...pravaErrorLogDetails(cause),
+    });
     const reason = cause instanceof SyntaxError
       ? "Prava returned an unreadable checkout response"
       : "Prava could not obtain a live checkout quote for this Offer";
@@ -374,13 +425,20 @@ export async function quoteOffersWithPrava(
   offers: ReadonlyArray<Offer>,
   destinationReference: string,
   runner: PravaCommandRunner = runInstalledPrava,
+  logger?: PipelineLogger,
 ): Promise<PravaQuoteResult> {
+  logger?.log("prava.quote_batch", "started", { offerCount: offers.length });
   try {
     const quotes = await Promise.all(
-      offers.map((offer) => quoteOffer(offer, destinationReference, runner)),
+      offers.map((offer) => quoteOffer(offer, destinationReference, runner, logger)),
     );
+    logger?.log("prava.quote_batch", "succeeded", {
+      quoteCount: quotes.length,
+      purchaseAvailableCount: quotes.filter((quote) => quote.purchaseAvailable).length,
+    });
     return { _tag: "ok", value: quotes };
   } catch (cause: unknown) {
+    logger?.log("prava.quote_batch", "failed", errorLogDetails(cause));
     return {
       _tag: "err",
       error: { _tag: "DependencyUnavailable", dependency: "prava", cause },
@@ -484,16 +542,31 @@ export function parsePravaCheckoutRequest(value: unknown): PravaCheckoutRequest 
 async function prepareAuthorizedCheckout(
   request: PravaCheckoutRequest,
   runner: PravaCommandRunner,
+  logger?: PipelineLogger,
 ): Promise<{ readonly quote: CheckoutQuote; readonly checkoutSessionId: string } | undefined> {
   const config = configFor(request.offer);
-  if (config === undefined) return undefined;
+  if (config === undefined) {
+    logger?.log("prava.checkout_product", "failed", {
+      offerId: request.offer.id,
+      reason: "catalog_not_configured",
+    });
+    return undefined;
+  }
+  logger?.log("prava.checkout_product", "started", { offerId: request.offer.id });
   const productPayload = await runJson(
     runner,
     ["shop", "product", "--product-id", config.productId, "--merchant", config.merchantDomain, "--json"],
     30_000,
   );
   const verified = parseVerifiedVariant(productPayload, config);
-  if (verified === undefined) return undefined;
+  if (verified === undefined) {
+    logger?.log("prava.checkout_product", "failed", {
+      offerId: request.offer.id,
+      reason: "product_identity_or_availability_unverified",
+    });
+    return undefined;
+  }
+  logger?.log("prava.checkout_product", "succeeded", { offerId: request.offer.id });
   const quoteArgs = [
     "shop", "quote", "--variant-id", verified.variantId,
     "--merchant", config.merchantDomain,
@@ -502,6 +575,7 @@ async function prepareAuthorizedCheckout(
   if (request.destinationReference !== "destination-ref-prava-default") {
     quoteArgs.push("--address-id", request.destinationReference);
   }
+  logger?.log("prava.checkout_requote", "started", { offerId: request.offer.id });
   const quotePayload = await runJson(runner, quoteArgs, 50_000);
   const checkoutSessionId = stringAt(record(quotePayload)?.checkout_session_id);
   const quote = parseQuote(
@@ -511,9 +585,18 @@ async function prepareAuthorizedCheckout(
     request.destinationReference,
     verified.product,
   );
-  return checkoutSessionId === undefined || quote === undefined
-    ? undefined
-    : { quote, checkoutSessionId };
+  if (checkoutSessionId === undefined || quote === undefined) {
+    logger?.log("prava.checkout_requote", "failed", {
+      offerId: request.offer.id,
+      reason: "invalid_or_incomplete_quote",
+    });
+    return undefined;
+  }
+  logger?.log("prava.checkout_requote", "succeeded", {
+    offerId: request.offer.id,
+    totalInr: quote.totalInr,
+  });
+  return { quote, checkoutSessionId };
 }
 
 /** Re-quotes and submits one authorized Prava sandbox checkout without retrying the charge. */
@@ -522,8 +605,11 @@ export async function checkoutWithPrava(
   credential: OneTimePravaCheckoutCredential | undefined,
   runner: PravaCommandRunner = runInstalledPrava,
   now: () => number = Date.now,
+  logger?: PipelineLogger,
 ): Promise<PravaCheckoutResult> {
+  logger?.log("prava.checkout_preparation", "started", { offerId: request.offer.id });
   if (credential === undefined) {
+    logger?.log("prava.checkout_preparation", "blocked", { reason: "credential_not_configured" });
     return {
       _tag: "not_submitted",
       reason: "purchase_unavailable",
@@ -533,8 +619,9 @@ export async function checkoutWithPrava(
   }
   let prepared;
   try {
-    prepared = await prepareAuthorizedCheckout(request, runner);
-  } catch {
+    prepared = await prepareAuthorizedCheckout(request, runner, logger);
+  } catch (cause: unknown) {
+    logger?.log("prava.checkout_preparation", "failed", pravaErrorLogDetails(cause));
     return {
       _tag: "not_submitted",
       reason: "purchase_unavailable",
@@ -543,6 +630,7 @@ export async function checkoutWithPrava(
     };
   }
   if (prepared === undefined) {
+    logger?.log("prava.checkout_preparation", "blocked", { reason: "authorized_offer_unverified" });
     return {
       _tag: "not_submitted",
       reason: "purchase_unavailable",
@@ -555,6 +643,11 @@ export async function checkoutWithPrava(
     return !Number.isFinite(expiresAtMilliseconds) || now() >= expiresAtMilliseconds;
   };
   if (prepared.quote.totalInr > request.maximumTotalInr) {
+    logger?.log("prava.checkout_guard", "blocked", {
+      reason: "authorized_maximum_exceeded",
+      freshTotalInr: prepared.quote.totalInr,
+      maximumTotalInr: request.maximumTotalInr,
+    });
     return {
       _tag: "not_submitted",
       reason: "blocked_by_price",
@@ -563,6 +656,7 @@ export async function checkoutWithPrava(
     };
   }
   if (authorizationExpired()) {
+    logger?.log("prava.checkout_guard", "blocked", { reason: "authorization_expired" });
     return {
       _tag: "not_submitted",
       reason: "purchase_unavailable",
@@ -573,6 +667,7 @@ export async function checkoutWithPrava(
 
   const credentials = credential.take();
   if (credentials === undefined) {
+    logger?.log("prava.checkout_guard", "blocked", { reason: "credential_already_consumed" });
     return {
       _tag: "not_submitted",
       reason: "purchase_unavailable",
@@ -582,6 +677,7 @@ export async function checkoutWithPrava(
   }
 
   let output: CommandOutput;
+  logger?.log("prava.checkout_submission", "started", { offerId: request.offer.id });
   try {
     output = await runner([
       "shop", "checkout",
@@ -592,7 +688,8 @@ export async function checkoutWithPrava(
       "--expiry-year", credentials.expiryYear,
       "--yes", "--json",
     ], 120_000);
-  } catch {
+  } catch (cause: unknown) {
+    logger?.log("prava.checkout_submission", "failed", errorLogDetails(cause));
     return {
       _tag: "submitted",
       paymentStatus: "unknown",
@@ -602,6 +699,7 @@ export async function checkoutWithPrava(
     };
   }
   if (output.timedOut === true) {
+    logger?.log("prava.checkout_submission", "failed", { reason: "timeout_after_submission" });
     return {
       _tag: "submitted",
       paymentStatus: "unknown",
@@ -613,7 +711,11 @@ export async function checkoutWithPrava(
   let payload: unknown;
   try {
     payload = parseJson(output.stdout);
-  } catch {
+  } catch (cause: unknown) {
+    logger?.log("prava.checkout_result", "failed", {
+      reason: "unreadable_response",
+      ...errorLogDetails(cause),
+    });
     return {
       _tag: "submitted",
       paymentStatus: "unknown",
@@ -628,6 +730,9 @@ export async function checkoutWithPrava(
   const orderIdentifier = stringAt(data?.order_id) ?? null;
   if (envelope?.success === true && status === "paid") {
     if (orderIdentifier === null) {
+      logger?.log("prava.checkout_result", "failed", {
+        reason: "successful_payment_without_order_identifier",
+      });
       return {
         _tag: "submitted",
         paymentStatus: "unknown",
@@ -636,6 +741,11 @@ export async function checkoutWithPrava(
         failureReason: "Prava reported successful payment without a merchant order identifier",
       };
     }
+    logger?.log("prava.checkout_result", "succeeded", {
+      paymentStatus: "successful",
+      hasMerchantOrderIdentifier: true,
+      confirmedTotalInr: prepared.quote.totalInr,
+    });
     return {
       _tag: "submitted",
       paymentStatus: "successful",
@@ -644,6 +754,11 @@ export async function checkoutWithPrava(
     };
   }
   if (status !== undefined && ["cancelled", "declined", "expired", "failed"].includes(status)) {
+    logger?.log("prava.checkout_result", "failed", {
+      paymentStatus: "failed",
+      providerStatus: status,
+      confirmedTotalInr: prepared.quote.totalInr,
+    });
     return {
       _tag: "submitted",
       paymentStatus: "failed",
@@ -652,6 +767,10 @@ export async function checkoutWithPrava(
       failureReason: `Prava confirmed checkout ${status}`,
     };
   }
+  logger?.log("prava.checkout_result", "failed", {
+    reason: "provider_outcome_unconfirmed",
+    providerStatus: status ?? "missing",
+  });
   return {
     _tag: "submitted",
     paymentStatus: "unknown",

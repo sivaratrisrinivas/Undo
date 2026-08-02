@@ -39,12 +39,14 @@ describe("Prava shopping browser boundary", () => {
     const result = await createPravaShoppingAdapter({ fetcher }).quoteOffers(
       SUPPORTED_OFFERS,
       "addr_home1",
+      "trace-prava-1234",
     );
 
     expect(result).toEqual({ _tag: "ok", value: [quote] });
     const body = requests[0]?.body;
     if (typeof body !== "string") throw new Error("Expected a JSON request body");
     expect(JSON.parse(body)).toEqual({ offers: SUPPORTED_OFFERS, destinationReference: "addr_home1" });
+    expect(new Headers(requests[0]?.headers).get("X-Undo-Trace-Id")).toBe("trace-prava-1234");
     expect(body).not.toMatch(/secretKey|publishableKey|"street"|"phone"|"card"/i);
   });
 

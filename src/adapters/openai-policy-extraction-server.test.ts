@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { EvidenceSnapshot } from "../domain";
+import { createPipelineLogger, type PipelineLogEntry } from "../pipeline-logging";
 import {
   extractPoliciesWithOpenAi,
   openAiApiKeyFrom,
@@ -22,6 +23,26 @@ const evidenceSnapshot: EvidenceSnapshot = {
 const evidence: ReadonlyArray<EvidenceSnapshot> = [evidenceSnapshot];
 
 describe("OpenAI policy extraction server boundary", () => {
+  it("logs a precise configuration failure without exposing a credential", async () => {
+    const entries: PipelineLogEntry[] = [];
+    const logger = createPipelineLogger({
+      traceId: "trace-openai-1234",
+      scope: "server",
+      sink: (entry) => { entries.push(entry); },
+    });
+
+    const result = await extractPoliciesWithOpenAi(evidence, { apiKey: undefined, logger });
+
+    expect(result).toMatchObject({ _tag: "err", error: { kind: "configuration" } });
+    expect(entries).toContainEqual(expect.objectContaining({
+      traceId: "trace-openai-1234",
+      stage: "openai.configuration",
+      status: "failed",
+      details: { reason: "api_key_missing" },
+    }));
+    expect(JSON.stringify(entries)).not.toMatch(/api[_-]?key.+[=:].+[a-z0-9]{8}/i);
+  });
+
   it("redacts the API key outside the authorization header", () => {
     const apiKey = openAiApiKeyFrom("test-secret");
     expect(String(apiKey)).toBe("[REDACTED]");

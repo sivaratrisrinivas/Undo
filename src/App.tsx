@@ -69,28 +69,37 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
       }[stage];
 
   async function assessPurchase() {
+    const traceId = adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : adapters.pipeline?.logger(traceId);
+    logger?.log("input_validation", "started", { inputMode });
     const input = inputMode === "preset" ? "preset" : inputMode === "url" ? url : productName;
     const resolved = resolveSupportedProduct(input);
     if (resolved === undefined) {
+      logger?.log("input_validation", "failed", { reason: "unsupported_product" });
+      logger?.log("assessment", "blocked", { reason: "unsupported_product" });
       setError("Not supported in this MVP");
       return;
     }
     const parsedPremiumLimit = parsePremiumLimitInr(premiumLimit);
     if (parsedPremiumLimit._tag === "err") {
+      logger?.log("input_validation", "failed", { reason: "invalid_premium_limit" });
+      logger?.log("assessment", "blocked", { reason: "invalid_premium_limit" });
       setError(parsedPremiumLimit.message);
       return;
     }
+    logger?.log("input_validation", "succeeded", { productModel: resolved.model });
     setError(undefined);
     setLoading(true);
     const result = await workflow.assess(
       resolved,
       parsedPremiumLimit.value,
       destinationReference,
+      traceId,
     );
     setLoading(false);
     if (result._tag === "err") {
       if (result.error._tag === "NoEligibleOffer" && result.error.record !== undefined) {
-        if (await adapters.records.save(result.error.record) === "unavailable") {
+        if (await workflow.saveBlockedRecord(result.error.record) === "unavailable") {
           setError("Unable to save the Undo Record safely.");
           return;
         }

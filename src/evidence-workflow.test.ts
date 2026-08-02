@@ -15,6 +15,7 @@ import {
 } from "./domain";
 import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
 import { createInMemoryPurchaseAuthorizationRepository } from "./adapters/fake-adapters";
+import { createPipelineLogger, type PipelineLogEntry } from "./pipeline-logging";
 
 const collectedAt = "2026-08-02T08:00:00.000Z";
 
@@ -170,13 +171,35 @@ describe("Policy Evidence workflow", () => {
     }
     expect(officialEvidenceAppliesToSupportedProduct(headphoneZone)).toBe(false);
     expect(officialEvidenceAppliesToSupportedProduct(conceptKart)).toBe(true);
+    const entries: PipelineLogEntry[] = [];
+    const baseAdapters = adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
+      evidenceApplicable: false,
+      onExtractPolicies: () => { extractionCalls += 1; },
+    });
 
-    const result = await new AssessmentWorkflow(
-      adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
-        evidenceApplicable: false,
-        onExtractPolicies: () => { extractionCalls += 1; },
-      }),
-    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+    const workflow = new AssessmentWorkflow({
+      ...baseAdapters,
+      pipeline: {
+        nextTraceId: () => "trace-applicability-1234",
+        logger: (traceId) => createPipelineLogger({
+          traceId,
+          scope: "browser",
+          sink: (entry) => { entries.push(entry); },
+        }),
+      },
+    });
+    const result = await workflow.assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(),
+      "destination-ref-test",
+    );
+    if (
+      result._tag === "err" &&
+      result.error._tag === "NoEligibleOffer" &&
+      result.error.record !== undefined
+    ) {
+      await workflow.saveBlockedRecord(result.error.record);
+    }
 
     expect(result).toMatchObject({
       _tag: "err",
@@ -185,6 +208,17 @@ describe("Policy Evidence workflow", () => {
         message: "Policy Evidence is incomplete for one or more Offers",
       },
     });
+    expect(entries).toContainEqual(expect.objectContaining({
+      stage: "evidence.applicability",
+      status: "failed",
+      details: { reason: "not_applicable", offerId: "headphone-zone" },
+    }));
+    expect(entries).toContainEqual(expect.objectContaining({
+      traceId: "trace-applicability-1234",
+      stage: "undo_record.blocked",
+      status: "succeeded",
+      details: { outcome: "blocked_by_policy" },
+    }));
     expect(extractionCalls).toBe(0);
   });
 

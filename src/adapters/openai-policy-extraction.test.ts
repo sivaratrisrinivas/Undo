@@ -47,14 +47,16 @@ describe("browser OpenAI policy extraction boundary", () => {
     );
     const adapter = createOpenAiPolicyExtractionAdapter({ fetcher });
 
-    await expect(adapter.extractPolicies(evidence)).resolves.toEqual({
+    await expect(adapter.extractPolicies(evidence, "trace-openai-1234")).resolves.toEqual({
       _tag: "ok",
       value: [policy],
     });
     expect(adapter.modelVersion()).toBe("openai/gpt-test");
-    expect(fetcher).toHaveBeenCalledWith(
-      "/api/policy-extraction",
-      expect.objectContaining({ body: JSON.stringify({ evidence }) }),
+    const request = fetcher.mock.calls[0];
+    expect(request?.[0]).toBe("/api/policy-extraction");
+    expect(request?.[1]?.body).toBe(JSON.stringify({ evidence }));
+    expect(new Headers(request?.[1]?.headers).get("X-Undo-Trace-Id")).toBe(
+      "trace-openai-1234",
     );
   });
 

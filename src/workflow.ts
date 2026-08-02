@@ -31,6 +31,7 @@ import {
   POLICY_FACTS,
   SUPPORTED_OFFERS,
 } from "./domain";
+import type { PipelineLogger } from "./pipeline-logging";
 
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
@@ -39,21 +40,29 @@ export type AssessmentAdapters = {
     appliesToProduct(product: Product, snapshot: EvidenceSnapshot): boolean;
   };
   readonly senso: {
-    retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
+    retrieveEvidence(
+      product: Product,
+      traceId?: string,
+    ): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
   };
   readonly openAi: {
     modelVersion(): string;
     extractPolicies(
       evidence: ReadonlyArray<EvidenceSnapshot>,
+      traceId?: string,
     ): Promise<AdapterResult<ReadonlyArray<PolicyAssessment>>>;
   };
   readonly prava: {
     quoteOffers(
       offers: ReadonlyArray<Offer>,
       destinationReference: string,
+      traceId?: string,
     ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>>;
-    registerCheckout(request: PravaCheckoutRequest): Promise<"registered" | "unavailable">;
-    submitCheckout(request: PravaCheckoutRequest): Promise<PravaCheckoutResult>;
+    registerCheckout(
+      request: PravaCheckoutRequest,
+      traceId?: string,
+    ): Promise<"registered" | "unavailable">;
+    submitCheckout(request: PravaCheckoutRequest, traceId?: string): Promise<PravaCheckoutResult>;
   };
   readonly evidence: {
     findReview(fingerprint: string): Promise<EvidenceReview | undefined>;
@@ -66,6 +75,10 @@ export type AssessmentAdapters = {
   readonly now: () => string;
   readonly nextAuthorizationId: () => string;
   readonly nextRecordId: () => string;
+  readonly pipeline?: {
+    readonly nextTraceId: () => string;
+    readonly logger: (traceId: string) => PipelineLogger;
+  };
 };
 
 /** Persistence boundary for auditable Undo Records and historical sandbox fallback. */
@@ -147,7 +160,11 @@ type AssessmentResult =
 
 type EvidenceResolution =
   | { readonly _tag: "ok"; readonly evidence: ReadonlyArray<EvidenceSnapshot> }
-  | { readonly _tag: "incomplete" }
+  | {
+      readonly _tag: "incomplete";
+      readonly reason: "unsupported_offer" | "missing_or_invalid_snapshot" | "not_applicable" | "selection_failed";
+      readonly offerId: Offer["id"] | null;
+    }
   | { readonly _tag: "conflict"; readonly offer: Offer };
 
 type PreparedEvidenceCache = {
@@ -354,6 +371,8 @@ function formatProductMismatches(equivalence: ProductEquivalence): string {
 
 /** Coordinates the high-level assessment while keeping external behavior injectable. */
 export class AssessmentWorkflow {
+  private readonly traceIds = new WeakMap<object, string>();
+
   constructor(private readonly adapters: AssessmentAdapters) {}
 
   /** Saves a human approval for the extracted facts tied to one exact fingerprint. */
@@ -361,10 +380,15 @@ export class AssessmentWorkflow {
     snapshot: EvidenceSnapshot,
     policy: PolicyAssessment,
   ): Promise<EvidenceReview> {
+    const traceId = this.traceIds.get(snapshot) ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
+    logger?.log("evidence.review_approval", "started", { offerId: snapshot.offerId });
     if (snapshot.offerId !== policy.offerId) {
+      logger?.log("evidence.review_approval", "failed", { reason: "offer_mismatch" });
       throw new Error("Evidence and extracted policy must belong to the same Offer");
     }
     if (!this.hasCompleteCitations(snapshot, policy)) {
+      logger?.log("evidence.review_approval", "failed", { reason: "citation_validation_failed" });
       throw new Error("Every extracted policy fact needs an exact quote from its Evidence Snapshot");
     }
     const review: EvidenceReview = {
@@ -372,8 +396,30 @@ export class AssessmentWorkflow {
       approvedAt: this.adapters.now(),
       policy,
     };
-    await this.adapters.evidence.saveReview(review);
+    try {
+      await this.adapters.evidence.saveReview(review);
+    } catch (cause: unknown) {
+      logger?.log("evidence.review_approval", "failed", {
+        reason: cause instanceof Error ? "repository_error" : "unknown_error",
+      });
+      throw cause;
+    }
+    logger?.log("evidence.review_approval", "succeeded", { offerId: snapshot.offerId });
     return review;
+  }
+
+  /** Persists an assessment-blocking Undo Record under the originating pipeline trace. */
+  async saveBlockedRecord(record: UndoRecord): Promise<"saved" | "unavailable"> {
+    const traceId = this.traceIds.get(record) ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
+    logger?.log("undo_record.blocked", "started", { outcome: record.outcome });
+    const result = await this.adapters.records.save(record);
+    logger?.log(
+      "undo_record.blocked",
+      result === "saved" ? "succeeded" : "failed",
+      result === "saved" ? { outcome: record.outcome } : { reason: "repository_unavailable" },
+    );
+    return result;
   }
 
   /** Builds the deterministic comparison from evidence, extraction, and quote adapters. */
@@ -381,13 +427,42 @@ export class AssessmentWorkflow {
     product: Product,
     premiumLimitInr: PremiumLimitInr,
     destinationReference: string,
+    existingTraceId?: string,
   ): Promise<AssessmentResult> {
+    const traceId = existingTraceId ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
     const safeDestinationReference = opaqueDestinationReference(destinationReference);
+    logger?.log("assessment", "started", {
+      productModel: product.model,
+      offerCount: SUPPORTED_OFFERS.length,
+      premiumLimitInr,
+      destination: safeDestinationReference === "destination-ref-prava-default" ? "default" : "opaque_custom",
+    });
+    logger?.log("senso.evidence", "started", { offerCount: SUPPORTED_OFFERS.length });
+    logger?.log("prava.quotes", "started", { offerCount: SUPPORTED_OFFERS.length });
     const [evidenceResult, quotesResult] = await Promise.all([
-      this.adapters.senso.retrieveEvidence(product),
-      this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, safeDestinationReference),
+      this.adapters.senso.retrieveEvidence(product, traceId),
+      this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, safeDestinationReference, traceId),
     ]);
+    logger?.log(
+      "senso.evidence",
+      evidenceResult._tag === "ok" ? "succeeded" : "failed",
+      evidenceResult._tag === "ok"
+        ? { snapshotCount: evidenceResult.value.length }
+        : { dependency: evidenceResult.error.dependency },
+    );
+    logger?.log(
+      "prava.quotes",
+      quotesResult._tag === "ok" ? "succeeded" : "failed",
+      quotesResult._tag === "ok"
+        ? {
+            quoteCount: quotesResult.value.length,
+            purchaseAvailableCount: quotesResult.value.filter((quote) => quote.purchaseAvailable).length,
+          }
+        : { dependency: quotesResult.error.dependency },
+    );
     if (quotesResult._tag === "err") {
+      logger?.log("assessment", "blocked", { reason: "checkout_quote_unavailable" });
       return {
         _tag: "err",
         error: {
@@ -404,15 +479,20 @@ export class AssessmentWorkflow {
     let usingCache = evidenceResult._tag === "err";
 
     if (evidenceResult._tag === "err") {
+      logger?.log("evidence.cache", "started", { reason: "senso_unavailable" });
       const cache = await this.adapters.evidence.loadCache(product);
       const preparedCache = cache === undefined ? undefined : this.prepareEvidenceCache(product, cache);
       if (preparedCache === undefined) {
+        logger?.log("evidence.cache", "failed", { reason: "no_valid_cache" });
+        logger?.log("assessment", "blocked", { reason: "senso_unavailable_without_cache" });
         return this.policyBlock(
           product,
           premiumLimitInr,
           safeDestinationReference,
           [],
           "Policy check unavailable: Senso retrieval failed and no valid cache exists",
+          undefined,
+          traceId,
         );
       }
       evidence = preparedCache.snapshots.map((snapshot) => ({
@@ -421,31 +501,57 @@ export class AssessmentWorkflow {
       }));
       policies = preparedCache.reviews.map((review) => review.policy);
       reviews = new Map(preparedCache.reviews.map((review) => [review.fingerprint, review]));
+      logger?.log("evidence.cache", "succeeded", { snapshotCount: evidence.length });
     } else {
       const liveEvidence = evidenceResult.value;
+      logger?.log("evidence.applicability", "started", { snapshotCount: liveEvidence.length });
       const resolution = this.resolveApplicableEvidence(product, liveEvidence);
       if (resolution._tag === "incomplete") {
+        logger?.log("evidence.applicability", "failed", {
+          reason: resolution.reason,
+          offerId: resolution.offerId,
+        });
+        logger?.log("assessment", "blocked", { reason: "policy_evidence_incomplete" });
         return this.policyBlock(
           product,
           premiumLimitInr,
           safeDestinationReference,
           liveEvidence,
           "Policy Evidence is incomplete for one or more Offers",
+          undefined,
+          traceId,
         );
       }
       if (resolution._tag === "conflict") {
         const message = `Policy Unclear: conflicting Policy Evidence for ${resolution.offer.merchant}`;
+        logger?.log("evidence.applicability", "failed", {
+          reason: "conflicting_snapshots",
+          offerId: resolution.offer.id,
+        });
+        logger?.log("assessment", "blocked", { reason: "policy_evidence_conflict" });
         return this.policyBlock(
           product,
           premiumLimitInr,
           safeDestinationReference,
           liveEvidence,
           message,
+          undefined,
+          traceId,
         );
       }
       evidence = resolution.evidence;
-      const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
+      logger?.log("evidence.applicability", "succeeded", {
+        snapshotCount: evidence.length,
+        offers: evidence.map((snapshot) => snapshot.offerId),
+      });
+      logger?.log("openai.extraction", "started", {
+        snapshotCount: evidence.length,
+        totalCharacters: evidence.reduce((total, snapshot) => total + snapshot.exactText.length, 0),
+      });
+      const policiesResult = await this.adapters.openAi.extractPolicies(evidence, traceId);
       if (policiesResult._tag === "err") {
+        logger?.log("openai.extraction", "failed", { dependency: policiesResult.error.dependency });
+        logger?.log("evidence.cache", "started", { reason: "openai_unavailable" });
         const cache = await this.adapters.evidence.loadCache(product);
         const preparedCache = cache === undefined ? undefined : this.prepareEvidenceCache(product, cache);
         const cacheMatchesCurrentEvidence =
@@ -460,19 +566,29 @@ export class AssessmentWorkflow {
             ),
           );
         if (!cacheMatchesCurrentEvidence || preparedCache === undefined) {
+          logger?.log("evidence.cache", "failed", { reason: "no_matching_reviewed_cache" });
+          logger?.log("assessment", "blocked", { reason: "openai_unavailable_without_cache" });
           return this.policyBlock(
             product,
             premiumLimitInr,
             safeDestinationReference,
             evidence,
             "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
+            undefined,
+            traceId,
           );
         }
         policies = preparedCache.reviews.map((review) => review.policy);
         reviews = new Map(preparedCache.reviews.map((review) => [review.fingerprint, review]));
         usingCache = true;
+        logger?.log("evidence.cache", "succeeded", { snapshotCount: evidence.length });
       } else {
         policies = policiesResult.value;
+        logger?.log("openai.extraction", "succeeded", {
+          policyCount: policies.length,
+          model: this.adapters.openAi.modelVersion(),
+        });
+        logger?.log("evidence.review_lookup", "started", { fingerprintCount: evidence.length });
         reviews = new Map(
           await Promise.all(
             evidence.map(async (snapshot) => [
@@ -481,6 +597,9 @@ export class AssessmentWorkflow {
             ] as const),
           ),
         );
+        logger?.log("evidence.review_lookup", "succeeded", {
+          reviewedCount: [...reviews.values()].filter((review) => review !== undefined).length,
+        });
       }
     }
 
@@ -492,6 +611,11 @@ export class AssessmentWorkflow {
           return policy === undefined ? [] : [{ snapshot, policy }];
         });
     if (reviewCandidates.length > 0) {
+      logger?.log("evidence.human_review", "blocked", {
+        candidateCount: reviewCandidates.length,
+        offers: reviewCandidates.map((candidate) => candidate.snapshot.offerId),
+      });
+      logger?.log("assessment", "blocked", { reason: "human_review_required" });
       return this.policyBlock(
         product,
         premiumLimitInr,
@@ -499,23 +623,33 @@ export class AssessmentWorkflow {
         evidence,
         "Policy Evidence changed and requires human review",
         reviewCandidates,
+        traceId,
       );
     }
     const now = Date.parse(this.adapters.now());
+    logger?.log("evidence.freshness", "started", { snapshotCount: evidence.length });
     evidence = evidence.map((snapshot) =>
       hasFreshEvidence(snapshot, now)
         ? snapshot
         : { ...snapshot, retrievalState: "stale" as const },
     );
     if (evidence.every((snapshot) => snapshot.retrievalState === "stale")) {
+      logger?.log("evidence.freshness", "failed", { staleCount: evidence.length });
+      logger?.log("assessment", "blocked", { reason: "all_evidence_stale" });
       return this.policyBlock(
         product,
         premiumLimitInr,
         safeDestinationReference,
         evidence,
         "Stale Evidence must be refreshed before purchase",
+        undefined,
+        traceId,
       );
     }
+    logger?.log("evidence.freshness", "succeeded", {
+      freshCount: evidence.filter((snapshot) => snapshot.retrievalState !== "stale").length,
+      staleCount: evidence.filter((snapshot) => snapshot.retrievalState === "stale").length,
+    });
     const applicablePolicies = evidence.flatMap((snapshot) => {
       const review = reviews.get(snapshot.fingerprint);
       if (this.isApplicableReview(snapshot, review)) return [review.policy];
@@ -524,12 +658,19 @@ export class AssessmentWorkflow {
       return extractedPolicy === undefined ? [] : [extractedPolicy];
     });
     if (applicablePolicies.length !== evidence.length) {
+      logger?.log("evidence.review_binding", "failed", {
+        policyCount: applicablePolicies.length,
+        snapshotCount: evidence.length,
+      });
+      logger?.log("assessment", "blocked", { reason: "review_binding_incomplete" });
       return this.policyBlock(
         product,
         premiumLimitInr,
         safeDestinationReference,
         evidence,
         "Policy Evidence changed and requires human review",
+        undefined,
+        traceId,
       );
     }
     policies = applicablePolicies;
@@ -539,7 +680,9 @@ export class AssessmentWorkflow {
         return this.isApplicableReview(snapshot, review) ? [review] : [];
       });
       if (completeReviews.length === evidence.length) {
+        logger?.log("evidence.cache_save", "started", { snapshotCount: evidence.length });
         await this.adapters.evidence.saveCache({ snapshots: evidence, reviews: completeReviews });
+        logger?.log("evidence.cache_save", "succeeded", { snapshotCount: evidence.length });
       }
     }
 
@@ -615,20 +758,26 @@ export class AssessmentWorkflow {
     );
     if (!Number.isFinite(baselineTotal)) {
       const message = "No Purchase Available Equivalent Offer found";
+      logger?.log("offer.validation", "succeeded", {
+        offers: unrankedOffers.map((offer) =>
+          `${offer.offer.id}:equivalent=${String(offer.offerEquivalent)},available=${String(offer.checkoutQuote.purchaseAvailable)}`),
+      });
+      logger?.log("assessment", "blocked", { reason: "no_purchase_available_equivalent_offer" });
+      const record = this.rememberTrace(this.blockedRecord(
+        product,
+        premiumLimitInr,
+        safeDestinationReference,
+        evidence,
+        message,
+        "purchase_unavailable",
+      ), traceId);
       return {
         _tag: "err",
         error: {
           _tag: "NoEligibleOffer",
           message,
           reason: "purchase_unavailable",
-          record: this.blockedRecord(
-            product,
-            premiumLimitInr,
-            safeDestinationReference,
-            evidence,
-            message,
-            "purchase_unavailable",
-          ),
+          record,
         },
       };
     }
@@ -657,6 +806,11 @@ export class AssessmentWorkflow {
                 : offer.explanation,
       };
     });
+    logger?.log("offer.validation", "succeeded", {
+      offers: assessedBeforeRanking.map((offer) =>
+        `${offer.offer.id}:equivalent=${String(offer.offerEquivalent)},available=${String(offer.checkoutQuote.purchaseAvailable)},evidence=${String(offer.evidenceEligible)},policy=${String(isPolicyEligible(offer.policy))},eligible=${String(offer.eligible)}`),
+    });
+    logger?.log("premium_baseline", "succeeded", { baselineTotalInr: baselineTotal, premiumLimitInr });
 
     const rankedOffers = assessedBeforeRanking.filter((offer) => offer.eligible).sort(compareEligibleOffers);
     const firstRankedOffer = rankedOffers[0];
@@ -698,21 +852,28 @@ export class AssessmentWorkflow {
             const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
             return policy === undefined ? [] : [{ snapshot, policy }];
           });
+      logger?.log("remedy_ranking", "blocked", {
+        reason,
+        eligibleCount: 0,
+        policyReasons,
+      });
+      logger?.log("assessment", "blocked", { reason });
+      const record = this.rememberTrace(this.blockedRecord(
+        product,
+        premiumLimitInr,
+        safeDestinationReference,
+        evidence,
+        blockingMessage,
+        reason,
+        rankedOfferIds,
+      ), traceId);
       return {
         _tag: "err",
         error: {
           _tag: "NoEligibleOffer",
           message: blockingMessage,
           reason,
-          record: this.blockedRecord(
-            product,
-            premiumLimitInr,
-            safeDestinationReference,
-            evidence,
-            blockingMessage,
-            reason,
-            rankedOfferIds,
-          ),
+          record,
           ...(pendingReviewCandidates === undefined || pendingReviewCandidates.length === 0
             ? {}
             : { reviewCandidates: pendingReviewCandidates }),
@@ -765,16 +926,30 @@ export class AssessmentWorkflow {
                 : compareEligibleOffersByRule(firstRankedOffer, rankedOffers[1]).reason,
           } as const);
 
+    logger?.log("remedy_ranking", "succeeded", {
+      rankedOfferIds: rankedOffers.map((offer) => offer.offer.id),
+      result: ranking._tag,
+      selectedOfferIds: ranking._tag === "winner"
+        ? [ranking.offer.offer.id]
+        : ranking.offers.map((offer) => offer.offer.id),
+    });
+
+    const assessment: ReversibilityAssessment = {
+      product,
+      offers: assessedOffers,
+      ranking,
+      baselineTotalInr: baselineTotal,
+      premiumLimitInr,
+      destinationReference: safeDestinationReference,
+    };
+    if (traceId !== undefined) this.traceIds.set(assessment, traceId);
+    logger?.log("assessment", "succeeded", {
+      assessedOfferCount: assessedOffers.length,
+      eligibleOfferCount: assessedOffers.filter((offer) => offer.eligible).length,
+    });
     return {
       _tag: "ok",
-      value: {
-        product,
-        offers: assessedOffers,
-        ranking,
-        baselineTotalInr: baselineTotal,
-        premiumLimitInr,
-        destinationReference: safeDestinationReference,
-      },
+      value: assessment,
     };
   }
 
@@ -887,15 +1062,29 @@ export class AssessmentWorkflow {
     selectedOffer: BuyerOfferSelection,
     acknowledgedWarningIds: ReadonlySet<string>,
   ): Promise<PurchaseAuthorizationResult> {
+    const traceId = this.traceIds.get(assessment) ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
+    logger?.log("purchase_authorization", "started", {
+      offerId: selectedOffer.offer.offer.id,
+      acknowledgedWarningCount: acknowledgedWarningIds.size,
+    });
     if (!this.adapters.policyContract.purchaseEnabled()) {
+      logger?.log("purchase_authorization", "blocked", { reason: "policy_contract_closed" });
       return { _tag: "err", reason: "purchase_blocked" };
     }
     const summaryResult = this.createApprovalSummary(assessment, selectedOffer);
-    if (summaryResult._tag === "err") return summaryResult;
+    if (summaryResult._tag === "err") {
+      logger?.log("purchase_authorization", "blocked", { reason: summaryResult.reason });
+      return summaryResult;
+    }
     const missingWarningIds = summaryResult.value.materialWarnings
       .filter((warning) => !acknowledgedWarningIds.has(warning.id))
       .map((warning) => warning.id);
     if (missingWarningIds.length > 0) {
+      logger?.log("purchase_authorization", "blocked", {
+        reason: "missing_warning_acknowledgements",
+        missingWarningCount: missingWarningIds.length,
+      });
       return {
         _tag: "err",
         reason: "missing_warning_acknowledgements",
@@ -932,11 +1121,15 @@ export class AssessmentWorkflow {
       state: "pending_registration",
     });
     if (created === "duplicate") {
+      logger?.log("authorization.persistence", "failed", { reason: "identifier_conflict" });
       return { _tag: "err", reason: "authorization_id_conflict" };
     }
     if (created === "unavailable") {
+      logger?.log("authorization.persistence", "failed", { reason: "repository_unavailable" });
       return { _tag: "err", reason: "authorization_unavailable" };
     }
+    logger?.log("authorization.persistence", "succeeded", { state: "pending_registration" });
+    logger?.log("prava.authorization_registration", "started", { offerId: selectedOffer.offer.offer.id });
     const registration = await this.adapters.prava.registerCheckout({
       authorizationId: authorization.id,
       expiresAt: authorization.expiresAt,
@@ -946,18 +1139,27 @@ export class AssessmentWorkflow {
       destinationReference: authorization.binding.destinationReference,
       maximumTotalInr: authorization.binding.maximumTotalInr,
       paymentMethod: authorization.paymentMethod,
-    });
+    }, traceId);
     if (registration === "unavailable") {
+      logger?.log("prava.authorization_registration", "failed", { reason: "server_registration_unavailable" });
+      logger?.log("purchase_authorization", "blocked", { reason: "authorization_unavailable" });
       return { _tag: "err", reason: "authorization_unavailable" };
     }
+    logger?.log("prava.authorization_registration", "succeeded", { offerId: selectedOffer.offer.offer.id });
     const activated = await this.adapters.authorization.transition(
       authorization.id,
       JSON.stringify(authorization),
       "active",
     );
     if (activated !== "updated") {
+      logger?.log("authorization.persistence", "failed", { reason: "activation_transition_failed" });
       return { _tag: "err", reason: "authorization_unavailable" };
     }
+    logger?.log("authorization.persistence", "succeeded", { state: "active" });
+    logger?.log("purchase_authorization", "succeeded", {
+      offerId: selectedOffer.offer.offer.id,
+      maximumTotalInr: authorization.binding.maximumTotalInr,
+    });
     return { _tag: "ok", value: authorization };
   }
 
@@ -1086,8 +1288,19 @@ export class AssessmentWorkflow {
 
   /** Consumes one Purchase Authorization, submits once to Prava, and creates the final Undo Record. */
   async checkout(claim: CheckoutSubmissionClaim): Promise<PurchaseCheckoutResult> {
+    const traceId = this.traceIds.get(claim.assessment) ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
+    logger?.log("checkout_claim", "started", { offerId: claim.selectedOffer.offer.offer.id });
     const claimed = await this.claimCheckoutSubmission(claim);
-    if (claimed._tag === "err") return claimed;
+    if (claimed._tag === "err") {
+      logger?.log("checkout_claim", "blocked", { reason: claimed.reason });
+      logger?.log("checkout", "blocked", { reason: claimed.reason });
+      return claimed;
+    }
+    logger?.log("checkout_claim", "succeeded", {
+      offerId: claim.selectedOffer.offer.offer.id,
+      authorizedMaximumTotalInr: claimed.value.authorization.binding.maximumTotalInr,
+    });
 
     const assessment = claim.assessment;
     const selected = claim.selectedOffer;
@@ -1135,10 +1348,15 @@ export class AssessmentWorkflow {
         "An order may exist, so Undo must not submit this authorization again.",
       ],
     };
+    logger?.log("undo_record.pending", "started", { outcome: pendingRecord.outcome });
     if (await this.adapters.records.save(pendingRecord) === "unavailable") {
+      logger?.log("undo_record.pending", "failed", { reason: "repository_unavailable" });
+      logger?.log("checkout", "failed", { reason: "pending_record_unavailable" });
       return { _tag: "err", reason: "record_unavailable", record: pendingRecord };
     }
+    logger?.log("undo_record.pending", "succeeded", { outcome: pendingRecord.outcome });
 
+    logger?.log("prava.checkout", "started", { offerId: claim.selectedOffer.offer.offer.id });
     const checkoutResult = await this.adapters.prava.submitCheckout({
       authorizationId: claimed.value.authorization.id,
       expiresAt: claimed.value.authorization.expiresAt,
@@ -1148,7 +1366,22 @@ export class AssessmentWorkflow {
       destinationReference: claimed.value.authorization.binding.destinationReference,
       maximumTotalInr: claimed.value.authorization.binding.maximumTotalInr,
       paymentMethod: claimed.value.paymentMethod,
-    });
+    }, traceId);
+    logger?.log(
+      "prava.checkout",
+      checkoutResult._tag === "not_submitted"
+        ? "blocked"
+        : checkoutResult.paymentStatus === "successful" &&
+            checkoutResult.merchantOrderIdentifier !== null
+          ? "succeeded"
+          : "failed",
+      checkoutResult._tag === "not_submitted"
+        ? { reason: checkoutResult.reason }
+        : {
+            paymentStatus: checkoutResult.paymentStatus,
+            hasMerchantOrderIdentifier: checkoutResult.merchantOrderIdentifier !== null,
+          },
+    );
     const submittedConfirmedTotalInr = checkoutResult._tag === "submitted"
       ? checkoutResult.confirmedTotalInr
       : null;
@@ -1165,8 +1398,12 @@ export class AssessmentWorkflow {
           "Prava returned a submitted checkout total outside the Purchase Authorization; the purchase outcome is unknown, an order may exist, and Undo will not retry.",
       };
       if (await this.adapters.records.save(safeRecord) === "unavailable") {
+        logger?.log("undo_record.final", "failed", { reason: "repository_unavailable" });
+        logger?.log("checkout", "failed", { reason: "record_unavailable" });
         return { _tag: "err", reason: "record_unavailable", record: safeRecord };
       }
+      logger?.log("undo_record.final", "succeeded", { outcome: safeRecord.outcome });
+      logger?.log("checkout", "failed", { outcome: safeRecord.outcome });
       return { _tag: "ok", value: safeRecord };
     }
     const notSubmitted = checkoutResult._tag === "not_submitted";
@@ -1212,10 +1449,18 @@ export class AssessmentWorkflow {
             ? "Checkout was submitted once; an order may exist, so Undo did not retry automatically."
             : "The Purchase Authorization was consumed by exactly one Prava checkout attempt.",
         ],
-      };
+    };
     if (await this.adapters.records.save(record) === "unavailable") {
+      logger?.log("undo_record.final", "failed", { reason: "repository_unavailable" });
+      logger?.log("checkout", "failed", { reason: "record_unavailable" });
       return { _tag: "err", reason: "record_unavailable", record };
     }
+    logger?.log("undo_record.final", "succeeded", { outcome: record.outcome });
+    logger?.log(
+      "checkout",
+      notSubmitted ? "blocked" : record.outcome === "purchased" ? "succeeded" : "failed",
+      { outcome: record.outcome },
+    );
     return {
       _tag: "ok",
       value: record,
@@ -1228,6 +1473,9 @@ export class AssessmentWorkflow {
     selectedOffer: BuyerOfferSelection,
     authorization?: PurchaseAuthorization,
   ): Promise<BuyerDeclineResult> {
+    const traceId = this.traceIds.get(assessment) ?? this.adapters.pipeline?.nextTraceId();
+    const logger = traceId === undefined ? undefined : this.adapters.pipeline?.logger(traceId);
+    logger?.log("buyer_decline", "started", { offerId: selectedOffer.offer.offer.id });
     const validatedSelection = this.selectOffer(assessment, selectedOffer.offer.offer.id);
     if (
       validatedSelection._tag === "err" ||
@@ -1314,8 +1562,11 @@ export class AssessmentWorkflow {
       },
     };
     if (await this.adapters.records.save(record) === "unavailable") {
+      logger?.log("undo_record.final", "failed", { reason: "repository_unavailable" });
       return { _tag: "err", reason: "record_unavailable", record };
     }
+    logger?.log("undo_record.final", "succeeded", { outcome: record.outcome });
+    logger?.log("buyer_decline", "succeeded", { outcome: record.outcome });
     return { _tag: "ok", value: record };
   }
 
@@ -1328,7 +1579,7 @@ export class AssessmentWorkflow {
         (snapshot) => !SUPPORTED_OFFERS.some((offer) => offer.id === snapshot.offerId),
       )
     ) {
-      return { _tag: "incomplete" };
+      return { _tag: "incomplete", reason: "unsupported_offer", offerId: null };
     }
 
     const controlling: Array<EvidenceSnapshot> = [];
@@ -1338,12 +1589,14 @@ export class AssessmentWorkflow {
         offerSnapshots.length === 0 ||
         offerSnapshots.some((snapshot) => !this.isCompleteSnapshotForOffer(offer, snapshot))
       ) {
-        return { _tag: "incomplete" };
+        return { _tag: "incomplete", reason: "missing_or_invalid_snapshot", offerId: offer.id };
       }
       const applicable = offerSnapshots.filter((snapshot) =>
         this.adapters.evidenceApplicability.appliesToProduct(product, snapshot),
       );
-      if (applicable.length === 0) return { _tag: "incomplete" };
+      if (applicable.length === 0) {
+        return { _tag: "incomplete", reason: "not_applicable", offerId: offer.id };
+      }
       const highestScope = applicable.some((snapshot) => snapshot.scope.kind === "product")
         ? "product"
         : "category";
@@ -1365,7 +1618,9 @@ export class AssessmentWorkflow {
         );
       if (highestScopeSnapshots.length > 1) return { _tag: "conflict", offer };
       const snapshot = highestScopeSnapshots[0];
-      if (snapshot === undefined) return { _tag: "incomplete" };
+      if (snapshot === undefined) {
+        return { _tag: "incomplete", reason: "selection_failed", offerId: offer.id };
+      }
       controlling.push(snapshot);
     }
     return { _tag: "ok", evidence: controlling };
@@ -1523,23 +1778,33 @@ export class AssessmentWorkflow {
       readonly snapshot: EvidenceSnapshot;
       readonly policy: PolicyAssessment;
     }>,
+    traceId?: string,
   ): AssessmentResult {
+    const record = this.rememberTrace(this.blockedRecord(
+      product,
+      premiumLimitInr,
+      destinationReference,
+      evidence,
+      message,
+    ), traceId);
+    for (const candidate of reviewCandidates ?? []) {
+      this.rememberTrace(candidate.snapshot, traceId);
+    }
     return {
       _tag: "err",
       error: {
         _tag: "NoEligibleOffer",
         message,
         reason: "blocked_by_policy",
-        record: this.blockedRecord(
-          product,
-          premiumLimitInr,
-          destinationReference,
-          evidence,
-          message,
-        ),
+        record,
         ...(reviewCandidates === undefined ? {} : { reviewCandidates }),
       },
     };
+  }
+
+  private rememberTrace<T extends object>(value: T, traceId: string | undefined): T {
+    if (traceId !== undefined) this.traceIds.set(value, traceId);
+    return value;
   }
 
   private blockedRecord(
