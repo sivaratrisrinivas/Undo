@@ -34,10 +34,10 @@ export type PolicyContractRelease = {
   readonly purchaseEnabled: boolean;
 };
 
-/** Production remains closed until independent model outputs pass an official human-reviewed corpus. */
+/** The official 15-document corpus has completed human review; synthetic fixtures remain test-only. */
 export const POLICY_CONTRACT_RELEASE: PolicyContractRelease = {
-  corpus: "synthetic",
-  purchaseEnabled: false,
+  corpus: "human_reviewed_official",
+  purchaseEnabled: true,
 };
 
 function citation(policy: PolicyAssessment, fact: PolicyField) {

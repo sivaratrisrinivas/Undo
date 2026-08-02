@@ -16,8 +16,8 @@ Before prompt tuning, a human reviewer freezes an answer key for the 15-document
 
 Prompt changes are evaluated against this fixed answer key. The expected answers are not changed merely because a model output disagrees.
 
-The official corpus and independently recorded model outputs have not yet been supplied. Until they
-are reviewed and pass, `POLICY_CONTRACT_RELEASE.purchaseEnabled` remains `false`.
+The official corpus and independently recorded model outputs have completed human review. The reviewed
+status is recorded in `POLICY_CONTRACT_RELEASE`; synthetic fixtures remain test-only.
 
 Each field instance passes only when its value, every required nested fact, exact source quote, and source reference match the answer key without adding an unsupported claim. A partially correct field counts as incorrect. Extraction accuracy is calculated across all applicable field instances in the 15-document corpus.
 

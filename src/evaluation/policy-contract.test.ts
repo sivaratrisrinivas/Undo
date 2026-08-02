@@ -4,7 +4,7 @@ import { FROZEN_POLICY_ANSWER_KEY } from "./frozen-policy-answer-key";
 import { POLICY_CONTRACT_RELEASE, scorePolicyExtractionContract } from "./policy-contract";
 
 describe("15-document policy extraction contract", () => {
-  it("proves the scorer accepts a matching synthetic baseline without opening production", () => {
+  it("keeps the synthetic scorer separate from the reviewed production gate", () => {
     const answerKeyBaseline = FROZEN_POLICY_ANSWER_KEY.map((entry) => ({
       documentId: entry.documentId,
       policy: entry.expected,
@@ -19,7 +19,10 @@ describe("15-document policy extraction contract", () => {
       demoFieldsAndCitationsCorrect: true,
       meetsAccuracyThreshold: true,
     });
-    expect(POLICY_CONTRACT_RELEASE).toEqual({ corpus: "synthetic", purchaseEnabled: false });
+    expect(POLICY_CONTRACT_RELEASE).toEqual({
+      corpus: "human_reviewed_official",
+      purchaseEnabled: true,
+    });
   });
 
   it("keeps purchase blocked for one wrong demo citation even above 95% overall", () => {
