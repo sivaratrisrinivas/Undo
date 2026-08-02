@@ -32,7 +32,7 @@ function parseStoredAuthorization(value: string | null): StoredPurchaseAuthoriza
       assessmentSnapshot: record.assessmentSnapshot,
       state: record.state,
     };
-  } catch (_cause: unknown) {
+  } catch {
     return undefined;
   }
 }
@@ -51,7 +51,7 @@ export function createBrowserPurchaseAuthorizationRepository(
           storage.setItem(key, JSON.stringify(value));
           return "created" as const;
         });
-      } catch (_cause: unknown) {
+      } catch {
         return "unavailable";
       }
     },
@@ -63,7 +63,7 @@ export function createBrowserPurchaseAuthorizationRepository(
             ? { _tag: "invalid" as const }
             : { _tag: "ok" as const, value };
         });
-      } catch (_cause: unknown) {
+      } catch {
         return { _tag: "unavailable" };
       }
     },
@@ -79,7 +79,7 @@ export function createBrowserPurchaseAuthorizationRepository(
           storage.setItem(key, JSON.stringify({ ...value, state: nextState }));
           return "updated" as const;
         });
-      } catch (_cause: unknown) {
+      } catch {
         return "unavailable";
       }
     },

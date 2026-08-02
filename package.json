@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:policy-contract": "vitest run src/evaluation/policy-contract.test.ts",
     "test:ranking-contract": "vitest run src/evaluation/ranking-contract.test.ts",
+    "test:browser": "playwright test",
     "test:senso-live": "RUN_SENSO_LIVE_TESTS=1 vitest run src/adapters/senso-evidence-live.test.ts",
     "test:prava-live": "RUN_PRAVA_LIVE_TESTS=1 vitest run src/adapters/prava-shopping-live.test.ts",
     "test:watch": "vitest",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "latest",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",

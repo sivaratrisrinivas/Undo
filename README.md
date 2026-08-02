@@ -28,6 +28,20 @@ another Offer only while it continues to satisfy every evidence, equivalence, av
 Premium Limit rule. The frozen 30-scenario contract verifies these boundaries with a 30/30 release
 target.
 
+Before checkout, Undo derives a complete Approval Summary from the buyer's validated Offer selection.
+It shows the exact Product and quantity, merchant and seller, masked Delivery Destination, Confirmed
+Checkout Total and Premium Limit, remedy terms, buyer-paid costs, Evidence Snapshot time and cache
+state, and every material Remedy Condition. Unopened-only restrictions, Unstated Cost, and other
+Material Warnings require separate acknowledgements rather than generic acceptance.
+
+Explicit approval creates a secret-free Purchase Authorization bound to that exact assessment and a
+maximum total. It expires after 10 minutes, accepts a lower fresh total but never a higher one, and can
+be claimed for only one Prava submission. A changed Offer, Product identity, seller, destination,
+Premium Limit, policy input, quantity, or payment method atomically invalidates it. Authorization state
+is retained in browser storage behind a per-authorization Web Lock so reloads, multiple tabs, and
+concurrent claims cannot turn one approval into multiple submissions. Checkout submission itself is
+the next implementation boundary and is not performed by the current application.
+
 ## Local setup
 
 ```sh
@@ -74,6 +88,9 @@ VITE_EVIDENCE_MODE=fake npm run dev
 npm test
 npm run test:policy-contract
 npm run test:ranking-contract
+npx vitest run src/purchase-authorization.test.ts src/adapters/browser-purchase-authorization-repository.test.ts
+npx playwright install chromium # first browser run on a new machine
+npm run test:browser        # real Chromium; starts the fake-adapter app automatically
 npm run test:senso-live    # opt-in; requires .env.local
 npm run test:prava-live    # opt-in; requires linked agent + default address/phone
 npm run lint
@@ -95,6 +112,16 @@ linked Prava agent identity.
 
 The official 15-document policy contract has completed human review, so the production release gate is
 enabled. Synthetic fixtures remain regression tests and do not replace that review.
+
+### Purchase Authorization verification
+
+Issue #7 was verified on 2026-08-02 with deterministic workflow clocks and IDs, concurrent claims from
+separate workflow instances, and a real Chromium runtime. The contract suite covers missing individual
+warning acknowledgements, exact 10-minute expiry, lower and higher totals, attempted reuse, unsupported
+payment methods, changed Product, merchant, seller, destination, quantity, Premium Limit, selected Offer,
+and material policy inputs. The real-browser path confirms that the approval action remains disabled
+until every warning is acknowledged, creates one visible active authorization, and does not call Prava
+checkout.
 
 ## Reference docs
 

@@ -9,6 +9,8 @@
   },
   "include": [
     "vite.config.ts",
+    "playwright.config.ts",
+    "tests/browser/**/*.ts",
     "src/domain.ts",
     "src/adapters/senso-evidence-server.ts",
     "src/adapters/openai-policy-extraction-server.ts",
