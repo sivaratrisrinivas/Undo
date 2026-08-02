@@ -521,6 +521,7 @@ export async function checkoutWithPrava(
   request: PravaCheckoutRequest,
   credential: OneTimePravaCheckoutCredential | undefined,
   runner: PravaCommandRunner = runInstalledPrava,
+  now: () => number = Date.now,
 ): Promise<PravaCheckoutResult> {
   if (credential === undefined) {
     return {
@@ -549,12 +550,24 @@ export async function checkoutWithPrava(
       explanation: "Prava could not verify the authorized Product and Offer",
     };
   }
+  const authorizationExpired = (): boolean => {
+    const expiresAtMilliseconds = Date.parse(request.expiresAt);
+    return !Number.isFinite(expiresAtMilliseconds) || now() >= expiresAtMilliseconds;
+  };
   if (prepared.quote.totalInr > request.maximumTotalInr) {
     return {
       _tag: "not_submitted",
       reason: "blocked_by_price",
       confirmedTotalInr: prepared.quote.totalInr,
       explanation: "The fresh Prava total exceeds the authorized maximum",
+    };
+  }
+  if (authorizationExpired()) {
+    return {
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: prepared.quote.totalInr,
+      explanation: "The Purchase Authorization expired before Prava checkout submission",
     };
   }
 

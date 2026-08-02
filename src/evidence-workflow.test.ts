@@ -651,6 +651,80 @@ describe("Policy Evidence workflow", () => {
     expect(extractionCalls).toBe(0);
   });
 
+  it("deduplicates same-content re-retrieval at the highest scope and sends only the freshest snapshot to OpenAI", async () => {
+    const baseSnapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const headphoneZone = baseSnapshots.find((snapshot) => snapshot.offerId === "headphone-zone");
+    if (headphoneZone === undefined) throw new Error("Missing re-retrieval fixture");
+    const older = {
+      ...headphoneZone,
+      scope: { kind: "product" as const, value: "Sennheiser HD 560S" },
+      collectedAt: "2026-08-02T07:00:00.000Z",
+      retrievalState: "cached" as const,
+    };
+    const freshest = {
+      ...older,
+      collectedAt: "2026-08-02T08:30:00.000Z",
+      retrievalState: "current" as const,
+    };
+    const snapshots = baseSnapshots.flatMap((snapshot) =>
+      snapshot.offerId === "headphone-zone" ? [older, freshest] : [snapshot],
+    );
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = baseSnapshots.map((snapshot): EvidenceReview => ({
+      fingerprint: snapshot.offerId === "headphone-zone" ? freshest.fingerprint : snapshot.fingerprint,
+      approvedAt: "2026-08-02T08:45:00.000Z",
+      policy: policyFor(snapshot.offerId),
+    }));
+    let extractedEvidence: ReadonlyArray<EvidenceSnapshot> | undefined;
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, reviews, {
+        onExtractPolicies: (evidence) => { extractedEvidence = evidence; },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result._tag).toBe("ok");
+    expect(extractedEvidence?.filter((snapshot) => snapshot.offerId === "headphone-zone")).toEqual([
+      freshest,
+    ]);
+    if (result._tag === "ok") {
+      expect(result.value.offers.find((offer) => offer.offer.id === "headphone-zone")?.evidence).toEqual(
+        freshest,
+      );
+    }
+  });
+
+  it("prefers current over cached over stale for same-timestamp identical snapshots", async () => {
+    const baseSnapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const headphoneZone = baseSnapshots.find((snapshot) => snapshot.offerId === "headphone-zone");
+    if (headphoneZone === undefined) throw new Error("Missing same-timestamp fixture");
+    const stale = { ...headphoneZone, retrievalState: "stale" as const };
+    const cached = { ...headphoneZone, retrievalState: "cached" as const };
+    const current = { ...headphoneZone, retrievalState: "current" as const };
+    const snapshots = baseSnapshots.flatMap((snapshot) =>
+      snapshot.offerId === "headphone-zone" ? [stale, cached, current] : [snapshot],
+    );
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = baseSnapshots.map((snapshot): EvidenceReview => ({
+      fingerprint: snapshot.fingerprint,
+      approvedAt: "2026-08-02T08:45:00.000Z",
+      policy: policyFor(snapshot.offerId),
+    }));
+    let extractedEvidence: ReadonlyArray<EvidenceSnapshot> | undefined;
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, reviews, {
+        onExtractPolicies: (evidence) => { extractedEvidence = evidence; },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result._tag).toBe("ok");
+    expect(extractedEvidence?.filter((snapshot) => snapshot.offerId === "headphone-zone")).toEqual([current]);
+    if (result._tag === "ok") {
+      expect(result.value.offers.find((offer) => offer.offer.id === "headphone-zone")?.evidence).toEqual(current);
+    }
+  });
+
   it("shows Unpriced Required Cost for a policy-blocked Offer and in the aggregate refusal reason", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));

@@ -198,4 +198,32 @@ describe("Product equivalence and Prava checkout quotes", () => {
       value: { destinationReference: destinations[0] },
     });
   });
+
+  it("hashes an addr_ address-like canary at the quote seam and in a blocked Undo Record", async () => {
+    const base = createFakeAdapters({ failSenso: true });
+    const destinations: string[] = [];
+    const adapters = {
+      ...base,
+      prava: {
+        ...base.prava,
+        quoteOffers: async (offers: Parameters<typeof base.prava.quoteOffers>[0], destination: string) => {
+          destinations.push(destination);
+          return base.prava.quoteOffers(offers, destination);
+        },
+      },
+    };
+    const canary = "addr_12_example_street_bengaluru_560001";
+
+    const result = await assess(adapters, "2000", canary);
+
+    expect(destinations[0]).toMatch(/^destination-ref-[a-f0-9]{8}$/);
+    expect(destinations[0]).not.toBe(canary);
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        record: { destinationReference: destinations[0] },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
 });

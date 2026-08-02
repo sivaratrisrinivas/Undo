@@ -193,8 +193,9 @@ describe("Prava shopping server boundary", () => {
     });
 
     const checkoutCredential = credential();
-    const result = await checkoutWithPrava(request, checkoutCredential, runner);
-    const replay = await checkoutWithPrava(request, checkoutCredential, runner);
+    const beforeExpiry = () => Date.parse("2026-08-02T17:00:00.000Z");
+    const result = await checkoutWithPrava(request, checkoutCredential, runner, beforeExpiry);
+    const replay = await checkoutWithPrava(request, checkoutCredential, runner, beforeExpiry);
 
     expect(result).toEqual({
       _tag: "submitted",
@@ -245,10 +246,70 @@ describe("Prava shopping server boundary", () => {
       destinationReference: "destination-ref-prava-default",
       maximumTotalInr: 13_500,
       paymentMethod: "prava_one_time_prepaid",
-    }), credential(), runner);
+    }), credential(), runner, () => Date.parse("2026-08-02T17:00:00.000Z"));
 
     expect(result).toMatchObject({ _tag: "not_submitted", reason: "blocked_by_price", confirmedTotalInr: 14_000 });
     expect(commands.some((args) => args[1] === "checkout")).toBe(false);
+  });
+
+  it("does not consume the credential or submit when authorization expires during fresh quote preparation", async () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const expiresAt = "2026-08-02T18:00:00.000Z";
+    let clockMilliseconds = Date.parse("2026-08-02T17:59:00.000Z");
+    const runner: PravaCommandRunner = (args) => {
+      commands.push(args);
+      if (args[1] === "product") {
+        return Promise.resolve(jsonOutput({
+          product: {
+            id: "gid://shopify/Product/4807978942527",
+            merchant: "headphonezone.in",
+            description: "Sennheiser HD 560S Black BOX CONTENTS standard cable 2 Year Warranty warranty in India",
+            variants: [{ id: "gid://shopify/ProductVariant/33115065450559", merchantDomain: "headphonezone.in", available: true, currency: "INR", priceAmount: 1_299_000 }],
+          },
+        }));
+      }
+      if (args[1] === "quote") {
+        clockMilliseconds = Date.parse(expiresAt);
+        return Promise.resolve(jsonOutput({
+          merchant: "headphonezone.in",
+          checkout_session_id: "ches_expired_after_prepare",
+          expires_at: "2026-08-02T18:30:00.000Z",
+          final_price: { amount: "13290.00", currency: "INR" },
+          price_breakdown: { subtotal_cents: 1_329_000, shipping_cents: 0, tax_cents: 0 },
+        }));
+      }
+      return Promise.resolve(jsonOutput({ success: true, data: { status: "paid", order_id: "must-not-submit" } }));
+    };
+    const checkoutCredential = credential();
+    const result = await checkoutWithPrava(
+      parsePravaCheckoutRequest({
+        authorizationId: "authorization-expired-after-prepare",
+        expiresAt,
+        product: SUPPORTED_PRODUCT,
+        quantity: 1,
+        offer: SUPPORTED_OFFERS[0],
+        destinationReference: "destination-ref-prava-default",
+        maximumTotalInr: 13_500,
+        paymentMethod: "prava_one_time_prepaid",
+      }),
+      checkoutCredential,
+      runner,
+      () => clockMilliseconds,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: 13_290,
+    });
+    if (result._tag === "not_submitted") expect(result.explanation).toMatch(/expired/i);
+    expect(commands.some((args) => args[1] === "checkout")).toBe(false);
+    expect(checkoutCredential.take()).toEqual({
+      token: "server-only-token",
+      cryptogram: "server-only-cryptogram",
+      expiryMonth: "12",
+      expiryYear: "2028",
+    });
   });
 
   it("keeps timeout and missing order confirmation ambiguous", async () => {
@@ -285,11 +346,13 @@ describe("Prava shopping server boundary", () => {
       baseRequest,
       credential(),
       runnerFor(jsonOutput({ success: true, data: { status: "paid" } })),
+      () => Date.parse("2026-08-02T17:00:00.000Z"),
     );
     const timeout = await checkoutWithPrava(
       baseRequest,
       credential(),
       runnerFor({ exitCode: 1, stdout: "", stderr: "", timedOut: true }),
+      () => Date.parse("2026-08-02T17:00:00.000Z"),
     );
 
     expect(missingOrder).toMatchObject({ _tag: "submitted", paymentStatus: "unknown", merchantOrderIdentifier: null });

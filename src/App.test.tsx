@@ -126,6 +126,34 @@ describe("guided Reversibility Assessment", () => {
     expect(adapters.activity.pravaCheckoutRequests).toBe(1);
   }, 10_000);
 
+  it("fails closed when a successful Prava response exceeds the Purchase Authorization", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({
+      recordId: "undo-over-ceiling-001",
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "successful",
+        merchantOrderIdentifier: "untrusted-over-ceiling-order",
+        confirmedTotalInr: 14_991,
+      },
+    });
+    render(<App adapters={adapters} />);
+    await reachCheckout(user);
+
+    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+
+    expect(await screen.findByText("Purchase outcome unknown")).toBeVisible();
+    expect(screen.getByText("Unknown — an order may exist; no automatic retry")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("outside the Purchase Authorization");
+    expect(screen.getByRole("alert")).toHaveTextContent("the purchase outcome is unknown");
+    expect(screen.getByRole("alert")).toHaveTextContent("an order may exist");
+    expect(screen.getByRole("alert")).toHaveTextContent("Undo will not retry");
+    expect(screen.queryByText("Purchased")).not.toBeInTheDocument();
+    expect(screen.queryByText("untrusted-over-ceiling-order")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(adapters.activity.pravaCheckoutRequests).toBe(1);
+  }, 10_000);
+
   it.each(SUPPORTED_OFFERS)(
     "resolves the approved $merchant URL to the supported Product",
     async (offer) => {

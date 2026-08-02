@@ -290,7 +290,6 @@ function opaqueDestinationReference(input: string): string {
   const trimmed = input.trim();
   if (
     trimmed === "destination-ref-prava-default" ||
-    /^addr_[A-Za-z0-9_-]{1,200}$/.test(trimmed) ||
     /^destination-ref-[0-9a-f]{8}$/.test(trimmed)
   ) {
     return trimmed;
@@ -1150,6 +1149,26 @@ export class AssessmentWorkflow {
       maximumTotalInr: claimed.value.authorization.binding.maximumTotalInr,
       paymentMethod: claimed.value.paymentMethod,
     });
+    const submittedConfirmedTotalInr = checkoutResult._tag === "submitted"
+      ? checkoutResult.confirmedTotalInr
+      : null;
+    const hasUntrustedSubmittedTotal =
+      checkoutResult._tag === "submitted" &&
+      submittedConfirmedTotalInr !== null &&
+      (!Number.isFinite(submittedConfirmedTotalInr) ||
+        submittedConfirmedTotalInr < 0 ||
+        submittedConfirmedTotalInr > claimed.value.authorization.binding.maximumTotalInr);
+    if (hasUntrustedSubmittedTotal) {
+      const safeRecord: UndoRecord = {
+        ...pendingRecord,
+        blockingReason:
+          "Prava returned a submitted checkout total outside the Purchase Authorization; the purchase outcome is unknown, an order may exist, and Undo will not retry.",
+      };
+      if (await this.adapters.records.save(safeRecord) === "unavailable") {
+        return { _tag: "err", reason: "record_unavailable", record: safeRecord };
+      }
+      return { _tag: "ok", value: safeRecord };
+    }
     const notSubmitted = checkoutResult._tag === "not_submitted";
     const outcome: UndoRecord["outcome"] = notSubmitted
       ? checkoutResult.reason
@@ -1331,7 +1350,18 @@ export class AssessmentWorkflow {
       const highestScopeSnapshots = applicable
         .filter((snapshot) => snapshot.scope.kind === highestScope)
         .filter((snapshot, index, snapshots) =>
-          snapshots.findIndex((candidate) => this.sameEvidenceSnapshot(candidate, snapshot)) === index,
+          snapshots.findIndex((candidate) => this.sameEvidenceIdentity(candidate, snapshot)) === index,
+        )
+        .map((snapshot) =>
+          applicable
+            .filter(
+              (candidate) =>
+                candidate.scope.kind === highestScope && this.sameEvidenceIdentity(candidate, snapshot),
+            )
+            .reduce(
+              (freshest, candidate) => this.preferFreshestEvidence(freshest, candidate),
+              snapshot,
+            ),
         );
       if (highestScopeSnapshots.length > 1) return { _tag: "conflict", offer };
       const snapshot = highestScopeSnapshots[0];
@@ -1379,19 +1409,32 @@ export class AssessmentWorkflow {
     );
   }
 
-  private sameEvidenceSnapshot(left: EvidenceSnapshot, right: EvidenceSnapshot): boolean {
+  private sameEvidenceIdentity(left: EvidenceSnapshot, right: EvidenceSnapshot): boolean {
     return (
       left.offerId === right.offerId &&
       left.merchant === right.merchant &&
       left.sourceUrl === right.sourceUrl &&
       left.scope.kind === right.scope.kind &&
       left.scope.value === right.scope.value &&
-      left.collectedAt === right.collectedAt &&
       left.exactText === right.exactText &&
       left.fingerprint === right.fingerprint &&
-      left.retrievedVia === right.retrievedVia &&
-      left.retrievalState === right.retrievalState
+      left.retrievedVia === right.retrievedVia
     );
+  }
+
+  private preferFreshestEvidence(
+    left: EvidenceSnapshot,
+    right: EvidenceSnapshot,
+  ): EvidenceSnapshot {
+    const leftCollectedAt = Date.parse(left.collectedAt);
+    const rightCollectedAt = Date.parse(right.collectedAt);
+    if (rightCollectedAt !== leftCollectedAt) {
+      return rightCollectedAt > leftCollectedAt ? right : left;
+    }
+    const retrievalStatePriority = { stale: 0, cached: 1, current: 2 } as const;
+    return retrievalStatePriority[right.retrievalState] > retrievalStatePriority[left.retrievalState]
+      ? right
+      : left;
   }
 
   private hasCompleteApprovalSummary(summary: ApprovalSummary): boolean {

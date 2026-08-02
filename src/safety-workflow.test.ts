@@ -5,6 +5,7 @@ import {
   parsePremiumLimitInr,
   SUPPORTED_PRODUCT,
   type EvidenceReview,
+  type PravaCheckoutResult,
   type ReviewedEvidenceCache,
 } from "./domain";
 import { AssessmentWorkflow, type AssessmentAdapters, type StoredPurchaseAuthorization } from "./workflow";
@@ -181,6 +182,82 @@ describe("complete deterministic safety paths", () => {
     expect(retry).toEqual({ _tag: "err", reason: "authorization_used" });
     expect(adapters.activity.pravaCheckoutRequests).toBe(1);
   });
+
+  it.each([
+    {
+      status: "successful",
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "successful",
+        merchantOrderIdentifier: "untrusted-success-order",
+        confirmedTotalInr: 14_991,
+      },
+    },
+    {
+      status: "failed",
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "failed",
+        merchantOrderIdentifier: null,
+        confirmedTotalInr: 14_991,
+        failureReason: "Untrusted failure response",
+      },
+    },
+    {
+      status: "unknown",
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "unknown",
+        merchantOrderIdentifier: "untrusted-unknown-order",
+        confirmedTotalInr: 14_991,
+        failureReason: "Untrusted unknown response",
+      },
+    },
+  ] satisfies ReadonlyArray<{ readonly status: string; readonly checkoutResult: PravaCheckoutResult }>) (
+    "fails closed for a submitted $status response above the Purchase Authorization ceiling",
+    async ({ checkoutResult }) => {
+      const adapters = createFakeAdapters({ checkoutResult });
+      const selected = await assessSelected(adapters);
+      const authorization = await authorizeSelected(selected.workflow, selected.assessment, selected.selection);
+      const claim = {
+        authorization,
+        assessment: selected.assessment,
+        selectedOffer: selected.selection,
+        quote: selected.selection.offer.checkoutQuote,
+        quantity: 1,
+        paymentMethod: "prava_one_time_prepaid",
+      } as const;
+
+      const result = await selected.workflow.checkout(claim);
+      const retry = await selected.workflow.checkout(claim);
+
+      expect(result).toMatchObject({
+        _tag: "ok",
+        value: {
+          outcome: "outcome_unknown",
+          pravaStatus: "outcome_unknown",
+          authorizationState: "used",
+          confirmedCheckoutTotalInr: 14_990,
+          merchantOrderIdentifier: null,
+          blockingReason:
+            "Prava returned a submitted checkout total outside the Purchase Authorization; the purchase outcome is unknown, an order may exist, and Undo will not retry.",
+          assumptions: [
+            "The Purchase Authorization was consumed before the checkout handoff.",
+            "An order may exist, so Undo must not submit this authorization again.",
+          ],
+        },
+      });
+      expect(await adapters.records.find("undo-demo-record")).toMatchObject({
+        outcome: "outcome_unknown",
+        pravaStatus: "outcome_unknown",
+        authorizationState: "used",
+        confirmedCheckoutTotalInr: 14_990,
+        merchantOrderIdentifier: null,
+      });
+      expect(retry).toEqual({ _tag: "err", reason: "authorization_used" });
+      expect(adapters.activity.pravaCheckoutRequests).toBe(1);
+    },
+  );
 
   it("keeps a Previous Sandbox Purchase separate from the failed current attempt", async () => {
     const adapters = createFakeAdapters({
