@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_PRODUCT } from "../domain";
 import { createSensoEvidenceAdapter } from "./senso-evidence";
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 describe("Senso Policy Evidence adapter", () => {
   it("retrieves official sources without sending buyer checkout data and fingerprints exact text", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -29,16 +32,35 @@ describe("Senso Policy Evidence adapter", () => {
       );
     };
 
-    const result = await createSensoEvidenceAdapter({ fetcher }).retrieveEvidence(
-      SUPPORTED_PRODUCT,
-    );
+    const runtimeProduct = {
+      ...SUPPORTED_PRODUCT,
+      buyerName: "buyer-secret-canary",
+      fullAddress: "full-address-canary",
+      paymentData: "payment-data-canary",
+      oneTimeCredential: "credential-canary",
+    };
+    const result = await createSensoEvidenceAdapter({ fetcher }).retrieveEvidence(runtimeProduct);
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe("/api/policy-evidence");
     const requestBody = requests[0]?.init.body;
     if (typeof requestBody !== "string") throw new Error("Expected a JSON request body");
-    expect(JSON.parse(requestBody)).toEqual({ product: SUPPORTED_PRODUCT });
-    expect(requestBody).not.toMatch(/destination|address|phone|payment/i);
+    const parsedRequest: unknown = JSON.parse(requestBody) as unknown;
+    if (!isRecord(parsedRequest) || !isRecord(parsedRequest.product)) {
+      throw new Error("Expected a projected product request");
+    }
+    expect(parsedRequest).toEqual({ product: SUPPORTED_PRODUCT });
+    expect(requestBody).not.toMatch(
+      /buyer-secret-canary|full-address-canary|payment-data-canary|credential-canary/i,
+    );
+    expect(Object.keys(parsedRequest.product)).toEqual([
+      "manufacturer",
+      "model",
+      "variant",
+      "condition",
+      "bundleContents",
+      "warrantyRegion",
+    ]);
     expect(result).toMatchObject({
       _tag: "ok",
       value: [

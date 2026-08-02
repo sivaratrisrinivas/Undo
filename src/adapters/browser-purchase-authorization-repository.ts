@@ -23,7 +23,10 @@ function parseStoredAuthorization(value: string | null): StoredPurchaseAuthoriza
     if (
       typeof record.authorizationSnapshot !== "string" ||
       typeof record.assessmentSnapshot !== "string" ||
-      (record.state !== "active" && record.state !== "invalidated" && record.state !== "used")
+      (record.state !== "pending_registration" &&
+        record.state !== "active" &&
+        record.state !== "invalidated" &&
+        record.state !== "used")
     ) {
       return undefined;
     }
@@ -74,6 +77,11 @@ export function createBrowserPurchaseAuthorizationRepository(
           const value = parseStoredAuthorization(storage.getItem(key));
           if (value === undefined || value.authorizationSnapshot !== authorizationSnapshot) {
             return "invalid" as const;
+          }
+          if (nextState === "active") {
+            if (value.state !== "pending_registration") return value.state;
+            storage.setItem(key, JSON.stringify({ ...value, state: "active" }));
+            return "updated" as const;
           }
           if (value.state !== "active") return value.state;
           storage.setItem(key, JSON.stringify({ ...value, state: nextState }));

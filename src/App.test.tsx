@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { App } from "./App";
 import { createFakeAdapters } from "./adapters/fake-adapters";
-import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "./domain";
+import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT, type EvidenceReview, type ReviewedEvidenceCache } from "./domain";
 
 async function reachCheckout(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Start assessment" }));
@@ -211,6 +211,38 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
   });
 
+  it("labels valid Cached Evidence when Senso is unavailable", async () => {
+    const source = createFakeAdapters();
+    const evidence = await source.senso.retrieveEvidence(SUPPORTED_PRODUCT);
+    const policies = await source.openAi.extractPolicies(
+      evidence._tag === "ok" ? evidence.value : [],
+    );
+    if (evidence._tag === "err" || policies._tag === "err") {
+      throw new Error("Expected deterministic cache fixtures");
+    }
+    const reviews = evidence.value.map((snapshot): EvidenceReview => {
+      const policy = policies.value.find((candidate) => candidate.offerId === snapshot.offerId);
+      if (policy === undefined) throw new Error("Expected one policy per Offer");
+      return { fingerprint: snapshot.fingerprint, approvedAt: "2026-08-01T11:00:00.000Z", policy };
+    });
+    const cache: ReviewedEvidenceCache = { snapshots: evidence.value, reviews };
+    const outage = createFakeAdapters({ failSenso: true });
+    const adapters = {
+      ...outage,
+      evidence: { ...outage.evidence, loadCache: () => Promise.resolve(cache) },
+    };
+    const user = userEvent.setup();
+
+    render(<App adapters={adapters} />);
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("heading", { name: "Offer comparison" })).toBeVisible();
+    expect(screen.getAllByText(/Cached Evidence/).length).toBeGreaterThanOrEqual(3);
+    expect(outage.activity.openAiRequests).toBe(0);
+    expect(outage.activity.pravaCheckoutRequests).toBe(0);
+  });
+
   it("shows the live quote breakdown and excludes advertised value from the total", async () => {
     const user = userEvent.setup();
     const adapters = createFakeAdapters();
@@ -306,6 +338,39 @@ describe("guided Reversibility Assessment", () => {
     );
     expect(screen.getByText("blocked-senso-001")).toBeVisible();
     expect(screen.getByText("0 snapshots retained")).toBeVisible();
+  });
+
+  it("shows an understandable Unpriced Required Cost refusal without authorization or checkout", async () => {
+    const user = userEvent.setup();
+    const base = createFakeAdapters({ recordId: "blocked-unpriced-001" });
+    const adapters = {
+      ...base,
+      evidence: {
+        ...base.evidence,
+        findReview: async (fingerprint: string) => {
+          const review = await base.evidence.findReview(fingerprint);
+          return review === undefined || review.policy.offerId !== "headphone-zone"
+            ? review
+            : {
+                ...review,
+                policy: {
+                  ...review.policy,
+                  reversalCost: { kind: "unpriced_required" as const },
+                },
+              };
+        },
+      },
+    };
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Unpriced Required Cost");
+    expect(screen.getByText("blocked-unpriced-001")).toBeVisible();
+    expect(adapters.activity.pravaCheckoutRequests).toBe(0);
   });
 
   it("lets a human approve changed evidence before reassessing", async () => {

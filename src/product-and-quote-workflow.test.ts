@@ -172,4 +172,30 @@ describe("Product equivalence and Prava checkout quotes", () => {
       value: { destinationReference: destinations[0] },
     });
   });
+
+  it("hashes a full destination disguised with the destination-ref prefix", async () => {
+    const base = createFakeAdapters();
+    const destinations: string[] = [];
+    const adapters = {
+      ...base,
+      prava: {
+        ...base.prava,
+        quoteOffers: async (offers: Parameters<typeof base.prava.quoteOffers>[0], destination: string) => {
+          destinations.push(destination);
+          return base.prava.quoteOffers(offers, destination);
+        },
+      },
+    };
+
+    const disguisedAddress = "destination-ref-12-example-street-bengaluru-560001";
+    const result = await assess(adapters, "2000", disguisedAddress);
+
+    expect(destinations[0]).toMatch(/^destination-ref-[a-f0-9]{8}$/);
+    expect(destinations[0]).not.toBe(disguisedAddress);
+    expect(destinations[0]).not.toContain("example-street");
+    expect(result).toMatchObject({
+      _tag: "ok",
+      value: { destinationReference: destinations[0] },
+    });
+  });
 });

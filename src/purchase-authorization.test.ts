@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createFakeAdapters } from "./adapters/fake-adapters";
-import { parsePremiumLimitInr, SUPPORTED_PRODUCT } from "./domain";
+import {
+  createFakeAdapters,
+  createInMemoryPurchaseAuthorizationRepository,
+} from "./adapters/fake-adapters";
+import { parsePremiumLimitInr, SUPPORTED_PRODUCT, type PurchaseAuthorization } from "./domain";
 import { AssessmentWorkflow } from "./workflow";
 
 function premiumLimit(value: string) {
@@ -247,6 +250,63 @@ describe("Purchase Authorization", () => {
     expect([firstClaim, concurrentClaim]).toContainEqual({
       _tag: "err",
       reason: "authorization_used",
+    });
+  });
+
+  it("rejects a pending registration before any checkout submission", async () => {
+    const authorizationRepository = createInMemoryPurchaseAuthorizationRepository();
+    const baseAdapters = createFakeAdapters({ authorizationId: "authorization-pending-registration" });
+    const adapters = { ...baseAdapters, authorization: authorizationRepository };
+    const workflow = new AssessmentWorkflow(adapters);
+    const selected = await assessSelectedOffer(workflow);
+    const summaryResult = workflow.createApprovalSummary(selected.assessment, selected.selection);
+    if (summaryResult._tag === "err") throw new Error(summaryResult.reason);
+    const authorization: PurchaseAuthorization = {
+      id: "authorization-pending-registration",
+      state: "active",
+      issuedAt: "2026-08-01T12:00:00.000Z",
+      expiresAt: "2026-08-01T12:10:00.000Z",
+      binding: {
+        product: selected.assessment.product,
+        quantity: 1,
+        offerId: selected.selection.offer.offer.id,
+        merchant: selected.selection.offer.offer.merchant,
+        seller: selected.selection.offer.offer.seller,
+        destinationReference: selected.assessment.destinationReference,
+        maximumTotalInr: selected.selection.offer.checkoutQuote.totalInr,
+        premiumLimitInr: selected.assessment.premiumLimitInr,
+        assessmentFingerprint: "test-fingerprint",
+      },
+      paymentMethod: "prava_one_time_prepaid",
+      acknowledgedWarningIds: summaryResult.value.materialWarnings.map((warning) => warning.id),
+    };
+    const authorizationSnapshot = JSON.stringify(authorization);
+    expect(
+      await authorizationRepository.create("authorization-pending-registration", {
+        authorizationSnapshot,
+        assessmentSnapshot: JSON.stringify(selected.assessment),
+        state: "pending_registration",
+      }),
+    ).toBe("created");
+
+    const result = await workflow.checkout({
+      authorization,
+      assessment: selected.assessment,
+      selectedOffer: selected.selection,
+      quote: selected.selection.offer.checkoutQuote,
+      quantity: 1,
+      paymentMethod: "prava_one_time_prepaid",
+    });
+
+    expect(result).toEqual({ _tag: "err", reason: "authorization_invalid" });
+    expect(baseAdapters.activity.pravaCheckoutRequests).toBe(0);
+    expect(await authorizationRepository.read("authorization-pending-registration", authorizationSnapshot)).toEqual({
+      _tag: "ok",
+      value: {
+        authorizationSnapshot,
+        assessmentSnapshot: JSON.stringify(selected.assessment),
+        state: "pending_registration",
+      },
     });
   });
 

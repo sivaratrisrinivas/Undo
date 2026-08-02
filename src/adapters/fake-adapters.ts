@@ -232,6 +232,11 @@ export function createInMemoryPurchaseAuthorizationRepository(): PurchaseAuthori
       if (value === undefined || value.authorizationSnapshot !== authorizationSnapshot) {
         return Promise.resolve("invalid");
       }
+      if (nextState === "active") {
+        if (value.state !== "pending_registration") return Promise.resolve(value.state);
+        records.set(id, { ...value, state: "active" });
+        return Promise.resolve("updated");
+      }
       if (value.state !== "active") return Promise.resolve(value.state);
       records.set(id, { ...value, state: nextState });
       return Promise.resolve("updated");

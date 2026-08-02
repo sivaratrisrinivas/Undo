@@ -76,6 +76,15 @@ describe("browser evidence repository", () => {
     } satisfies EvidenceReview;
     localStorage.setItem("undo.evidence-reviews.v1", JSON.stringify([knownFieldDuplicate]));
     expect(await reloaded.findReview(knownFieldDuplicate.fingerprint)).toBeUndefined();
+
+    const contaminatedReview = {
+      ...review,
+      fingerprint: "sha256:contaminated-review",
+      policy: { ...review.policy, paymentCredential: "review-secret-canary" },
+    };
+    await repository.saveReview(contaminatedReview);
+    expect(localStorage.getItem("undo.evidence-reviews.v1")).not.toContain("review-secret-canary");
+    expect(await reloaded.findReview(contaminatedReview.fingerprint)).toBeUndefined();
   });
 
   it("rejects cached text that no longer matches its fingerprint", async () => {
@@ -99,5 +108,36 @@ describe("browser evidence repository", () => {
     expect(
       await createBrowserEvidenceRepository(localStorage).loadCache({} as never),
     ).toBeUndefined();
+  });
+
+  it("rejects contaminated cache snapshots and never writes their private fields", async () => {
+    const exactText = "A complete official policy snapshot.";
+    const snapshot = {
+      offerId: "headphone-zone" as const,
+      merchant: "Headphone Zone",
+      sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
+      scope: { kind: "product" as const, value: "Sennheiser HD 560S" },
+      collectedAt: "2026-08-02T09:00:00.000Z",
+      exactText,
+      fingerprint: await fingerprintEvidenceText(exactText),
+      retrievedVia: "senso" as const,
+      retrievalState: "current" as const,
+      fullAddress: "cache-secret-canary",
+    };
+    const repository = createBrowserEvidenceRepository(localStorage);
+
+    await repository.saveCache({ snapshots: [snapshot], reviews: [] });
+
+    expect(localStorage.getItem("undo.reviewed-evidence-cache.v1")).toBeNull();
+    expect(localStorage.getItem("undo.reviewed-evidence-cache.v1") ?? "").not.toContain("cache-secret-canary");
+
+    localStorage.setItem(
+      "undo.reviewed-evidence-cache.v1",
+      JSON.stringify({
+        snapshots: [{ ...snapshot, fullAddress: "cache-secret-canary" }],
+        reviews: [],
+      }),
+    );
+    expect(await repository.loadCache({} as never)).toBeUndefined();
   });
 });

@@ -71,7 +71,7 @@ function adapters(
     readonly failOpenAi?: boolean;
     readonly cache?: ReviewedEvidenceCache;
     readonly evidenceApplicable?: boolean;
-    readonly onExtractPolicies?: () => void;
+    readonly onExtractPolicies?: (evidence: ReadonlyArray<EvidenceSnapshot>) => void;
   },
 ): AssessmentAdapters {
   const reviewByFingerprint = new Map(reviews.map((review) => [review.fingerprint, review]));
@@ -95,8 +95,8 @@ function adapters(
     },
     openAi: {
       modelVersion: () => "fake-openai/test",
-      extractPolicies: () => {
-        options?.onExtractPolicies?.();
+      extractPolicies: (evidence) => {
+        options?.onExtractPolicies?.(evidence);
         return options?.failOpenAi === true
           ? Promise.resolve({
               _tag: "err",
@@ -368,6 +368,36 @@ describe("Policy Evidence workflow", () => {
     }
   });
 
+  it("fails closed when a Reviewed Evidence cache contains stale snapshots", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => ({
+      ...snapshotFor(offer),
+      retrievalState: "stale" as const,
+    }));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => ({
+        fingerprint: snapshot.fingerprint,
+        approvedAt: "2026-08-01T12:00:00.000Z",
+        policy: policies[index]!,
+      }),
+    );
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, reviews, {
+        failSenso: true,
+        cache: { snapshots, reviews },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message: "Policy check unavailable: Senso retrieval failed and no valid cache exists",
+      },
+    });
+  });
+
   it("blocks unavailable evidence and creates an Undo Record when no valid cache exists", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
@@ -546,5 +576,138 @@ describe("Policy Evidence workflow", () => {
         reason: "blocked_by_policy",
       },
     });
+  });
+
+  it("uses Product-scoped Evidence Snapshot over category evidence and extracts only the controlling snapshot", async () => {
+    const categorySnapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const productSnapshot = {
+      ...snapshotFor(SUPPORTED_OFFERS[0] ?? { id: "headphone-zone", merchant: "Headphone Zone", seller: "Headphone Zone", url: "" }),
+      scope: { kind: "product" as const, value: "Sennheiser HD 560S" },
+      fingerprint: "sha256:headphone-zone-product",
+    };
+    const snapshots = categorySnapshots.flatMap((snapshot) =>
+      snapshot.offerId === "headphone-zone" ? [snapshot, productSnapshot] : [snapshot],
+    );
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const reviews = snapshots.map((snapshot): EvidenceReview => ({
+      fingerprint: snapshot.fingerprint,
+      approvedAt: "2026-08-01T12:00:00.000Z",
+      policy: policyFor(snapshot.offerId),
+    }));
+    let extractedEvidence: ReadonlyArray<EvidenceSnapshot> | undefined;
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policies, reviews, {
+        onExtractPolicies: (evidence) => { extractedEvidence = evidence; },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result._tag).toBe("ok");
+    expect(extractedEvidence?.filter((snapshot) => snapshot.offerId === "headphone-zone")).toEqual([
+      productSnapshot,
+    ]);
+    if (result._tag === "ok") {
+      expect(result.value.offers.find((offer) => offer.offer.id === "headphone-zone")?.evidence).toEqual(
+        productSnapshot,
+      );
+    }
+  });
+
+  it("blocks distinct same-scope snapshots as Policy Unclear before OpenAI and retains the full conflicting set", async () => {
+    const baseSnapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const headphoneZone = baseSnapshots.find((snapshot) => snapshot.offerId === "headphone-zone");
+    if (headphoneZone === undefined) throw new Error("Missing conflict fixture");
+    const productOne = {
+      ...headphoneZone,
+      scope: { kind: "product" as const, value: "Sennheiser HD 560S" },
+      exactText: "Product return wording A.",
+      fingerprint: "sha256:headphone-zone-product-a",
+    };
+    const productTwo = {
+      ...headphoneZone,
+      scope: { kind: "product" as const, value: "Sennheiser HD 560S" },
+      exactText: "Product return wording B.",
+      fingerprint: "sha256:headphone-zone-product-b",
+    };
+    const snapshots = baseSnapshots.flatMap((snapshot) =>
+      snapshot.offerId === "headphone-zone" ? [snapshot, productOne, productTwo] : [snapshot],
+    );
+    let extractionCalls = 0;
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
+        onExtractPolicies: () => { extractionCalls += 1; },
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message: "Policy Unclear: conflicting Policy Evidence for Headphone Zone",
+        record: { evidence: snapshots, blockingReason: "Policy Unclear: conflicting Policy Evidence for Headphone Zone" },
+      },
+    });
+    expect(extractionCalls).toBe(0);
+  });
+
+  it("shows Unpriced Required Cost for a policy-blocked Offer and in the aggregate refusal reason", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const oneBlocked = policies.map((policy) =>
+      policy.offerId === "headphone-zone"
+        ? { ...policy, reversalCost: { kind: "unpriced_required" as const } }
+        : policy,
+    );
+    const reviews = snapshots.map((snapshot): EvidenceReview => ({
+      fingerprint: snapshot.fingerprint,
+      approvedAt: "2026-08-01T12:00:00.000Z",
+      policy: oneBlocked.find((policy) => policy.offerId === snapshot.offerId) ?? policyFor(snapshot.offerId),
+    }));
+
+    const assessed = await new AssessmentWorkflow(
+      adapters(snapshots, oneBlocked, reviews),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(assessed).toMatchObject({ _tag: "ok" });
+    if (assessed._tag === "ok") {
+      expect(assessed.value.offers.find((offer) => offer.offer.id === "headphone-zone")?.explanation).toBe(
+        "Blocked: Unpriced Required Cost",
+      );
+    }
+
+    const allBlocked = policies.map((policy) => ({
+      ...policy,
+      reversalCost: { kind: "unpriced_required" as const },
+    }));
+    const refused = await new AssessmentWorkflow(
+      adapters(
+        snapshots,
+        allBlocked,
+        snapshots.map((snapshot): EvidenceReview => ({
+          fingerprint: snapshot.fingerprint,
+          approvedAt: "2026-08-01T12:00:00.000Z",
+          policy: allBlocked.find((policy) => policy.offerId === snapshot.offerId) ?? policyFor(snapshot.offerId),
+        })),
+      ),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    if (refused._tag !== "err" || refused.error._tag !== "NoEligibleOffer") {
+      throw new Error("Expected a policy-blocked assessment failure");
+    }
+    expect(refused.error.reason).toBe("blocked_by_policy");
+    expect(refused.error.message).toContain("Unpriced Required Cost");
+    if (refused.error.record === undefined) throw new Error("Expected a blocked Undo Record");
+    const blockedRecord: unknown = refused.error.record;
+    if (
+      typeof blockedRecord !== "object" ||
+      blockedRecord === null ||
+      !("blockingReason" in blockedRecord)
+    ) {
+      throw new Error("Expected a blocking reason on the Undo Record");
+    }
+    const blockingReason = blockedRecord.blockingReason;
+    if (typeof blockingReason !== "string") throw new Error("Expected a textual blocking reason");
+    expect(blockingReason).toContain("Unpriced Required Cost");
   });
 });

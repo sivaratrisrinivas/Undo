@@ -28,7 +28,6 @@ import type {
 } from "./domain";
 import {
   compareProductIdentity,
-  OFFICIAL_EVIDENCE_SOURCES,
   POLICY_FACTS,
   SUPPORTED_OFFERS,
 } from "./domain";
@@ -80,7 +79,7 @@ export type UndoRecordRepository = {
 export type StoredPurchaseAuthorization = {
   readonly authorizationSnapshot: string;
   readonly assessmentSnapshot: string;
-  readonly state: "active" | "invalidated" | "used";
+  readonly state: "pending_registration" | "active" | "invalidated" | "used";
 };
 
 /** Atomic persistence boundary for single-use Purchase Authorization transitions. */
@@ -100,8 +99,16 @@ export type PurchaseAuthorizationRepository = {
   transition(
     id: string,
     authorizationSnapshot: string,
-    nextState: "invalidated" | "used",
-  ): Promise<"updated" | "invalid" | "invalidated" | "unavailable" | "used">;
+    nextState: "active" | "invalidated" | "used",
+  ): Promise<
+    | "updated"
+    | "invalid"
+    | "pending_registration"
+    | "active"
+    | "invalidated"
+    | "unavailable"
+    | "used"
+  >;
 };
 
 /** Typed failure returned by an external adapter instead of rejecting. */
@@ -138,6 +145,16 @@ type AssessmentResult =
   | { readonly _tag: "ok"; readonly value: ReversibilityAssessment }
   | { readonly _tag: "err"; readonly error: AssessmentFailure };
 
+type EvidenceResolution =
+  | { readonly _tag: "ok"; readonly evidence: ReadonlyArray<EvidenceSnapshot> }
+  | { readonly _tag: "incomplete" }
+  | { readonly _tag: "conflict"; readonly offer: Offer };
+
+type PreparedEvidenceCache = {
+  readonly snapshots: ReadonlyArray<EvidenceSnapshot>;
+  readonly reviews: ReadonlyArray<EvidenceReview>;
+};
+
 function isPolicyEligible(policy: PolicyAssessment): boolean {
   return (
     policy.changeOfMind !== "none" &&
@@ -148,6 +165,23 @@ function isPolicyEligible(policy: PolicyAssessment): boolean {
     policy.reversalCost.kind !== "unclear" &&
     policy.reversalCost.kind !== "unpriced_required"
   );
+}
+
+function policyBlockingExplanation(policy: PolicyAssessment): string {
+  if (policy.changeOfMind === "none") {
+    return "Not reversible: defect remedy only";
+  }
+  const reasons = [
+    policy.changeOfMind === "unclear" ||
+    policy.remedyWindow.kind === "unclear" ||
+    policy.productCondition === "unclear" ||
+    policy.returnTransport === "unclear" ||
+    policy.reversalCost.kind === "unclear"
+      ? "Policy Unclear"
+      : undefined,
+    policy.reversalCost.kind === "unpriced_required" ? "Unpriced Required Cost" : undefined,
+  ].flatMap((reason) => reason === undefined ? [] : [reason]);
+  return reasons.length === 0 ? "Blocked: Policy Unclear" : `Blocked: ${reasons.join("; ")}`;
 }
 
 function reversalCostOrder(policy: PolicyAssessment): number {
@@ -254,7 +288,13 @@ function hasValidQuoteBreakdown(quote: CheckoutQuote): boolean {
 
 function opaqueDestinationReference(input: string): string {
   const trimmed = input.trim();
-  if (/destination-ref-[a-z0-9-]+$/i.test(trimmed)) return trimmed;
+  if (
+    trimmed === "destination-ref-prava-default" ||
+    /^addr_[A-Za-z0-9_-]{1,200}$/.test(trimmed) ||
+    /^destination-ref-[0-9a-f]{8}$/.test(trimmed)
+  ) {
+    return trimmed;
+  }
   return `destination-ref-${stableFingerprint(trimmed)}`;
 }
 
@@ -366,7 +406,8 @@ export class AssessmentWorkflow {
 
     if (evidenceResult._tag === "err") {
       const cache = await this.adapters.evidence.loadCache(product);
-      if (cache === undefined) {
+      const preparedCache = cache === undefined ? undefined : this.prepareEvidenceCache(product, cache);
+      if (preparedCache === undefined) {
         return this.policyBlock(
           product,
           premiumLimitInr,
@@ -375,46 +416,51 @@ export class AssessmentWorkflow {
           "Policy check unavailable: Senso retrieval failed and no valid cache exists",
         );
       }
-      evidence = cache.snapshots.map((snapshot) => ({
+      evidence = preparedCache.snapshots.map((snapshot) => ({
         ...snapshot,
         retrievalState: "cached" as const,
       }));
-      policies = cache.reviews.map((review) => review.policy);
-      reviews = new Map(cache.reviews.map((review) => [review.fingerprint, review]));
+      policies = preparedCache.reviews.map((review) => review.policy);
+      reviews = new Map(preparedCache.reviews.map((review) => [review.fingerprint, review]));
     } else {
-      evidence = evidenceResult.value;
-      if (!this.hasCompleteEvidence(product, evidence)) {
+      const liveEvidence = evidenceResult.value;
+      const resolution = this.resolveApplicableEvidence(product, liveEvidence);
+      if (resolution._tag === "incomplete") {
         return this.policyBlock(
           product,
           premiumLimitInr,
           safeDestinationReference,
-          evidence,
+          liveEvidence,
           "Policy Evidence is incomplete for one or more Offers",
         );
       }
+      if (resolution._tag === "conflict") {
+        const message = `Policy Unclear: conflicting Policy Evidence for ${resolution.offer.merchant}`;
+        return this.policyBlock(
+          product,
+          premiumLimitInr,
+          safeDestinationReference,
+          liveEvidence,
+          message,
+        );
+      }
+      evidence = resolution.evidence;
       const policiesResult = await this.adapters.openAi.extractPolicies(evidence);
       if (policiesResult._tag === "err") {
         const cache = await this.adapters.evidence.loadCache(product);
+        const preparedCache = cache === undefined ? undefined : this.prepareEvidenceCache(product, cache);
         const cacheMatchesCurrentEvidence =
-          cache !== undefined &&
-          this.hasCompleteEvidence(product, cache.snapshots) &&
+          preparedCache !== undefined &&
+          preparedCache.snapshots.length === evidence.length &&
           evidence.every((snapshot) =>
-            cache.snapshots.some(
+            preparedCache.snapshots.some(
               (cached) =>
                 cached.offerId === snapshot.offerId &&
                 cached.fingerprint === snapshot.fingerprint &&
                 cached.exactText === snapshot.exactText,
             ),
-          ) &&
-          cache.reviews.every((review) =>
-            evidence.some(
-              (snapshot) =>
-                snapshot.fingerprint === review.fingerprint &&
-                this.isApplicableReview(snapshot, review),
-            ),
-          ) &&
-          cache.reviews.length === evidence.length;
-        if (!cacheMatchesCurrentEvidence || cache === undefined) {
+          );
+        if (!cacheMatchesCurrentEvidence || preparedCache === undefined) {
           return this.policyBlock(
             product,
             premiumLimitInr,
@@ -423,8 +469,8 @@ export class AssessmentWorkflow {
             "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
           );
         }
-        policies = cache.reviews.map((review) => review.policy);
-        reviews = new Map(cache.reviews.map((review) => [review.fingerprint, review]));
+        policies = preparedCache.reviews.map((review) => review.policy);
+        reviews = new Map(preparedCache.reviews.map((review) => [review.fingerprint, review]));
         usingCache = true;
       } else {
         policies = policiesResult.value;
@@ -439,15 +485,6 @@ export class AssessmentWorkflow {
       }
     }
 
-    if (!this.hasCompleteEvidence(product, evidence)) {
-      return this.policyBlock(
-        product,
-        premiumLimitInr,
-        safeDestinationReference,
-        evidence,
-        "Policy Evidence is incomplete for one or more Offers",
-      );
-    }
     const reviewCandidates = usingCache
       ? []
       : evidence.flatMap((snapshot) => {
@@ -483,6 +520,7 @@ export class AssessmentWorkflow {
     const applicablePolicies = evidence.flatMap((snapshot) => {
       const review = reviews.get(snapshot.fingerprint);
       if (this.isApplicableReview(snapshot, review)) return [review.policy];
+      if (usingCache) return [];
       const extractedPolicy = policies.find((policy) => policy.offerId === snapshot.offerId);
       return extractedPolicy === undefined ? [] : [extractedPolicy];
     });
@@ -566,9 +604,7 @@ export class AssessmentWorkflow {
                 : !evidenceFresh
                   ? "Blocked: Stale Evidence must be refreshed"
               : !isPolicyEligible(policy)
-                ? policy.changeOfMind === "none"
-                  ? "Not reversible: defect remedy only"
-                  : "Blocked by incomplete policy evidence"
+                ? policyBlockingExplanation(policy)
                 : "Eligible Reversible Offer",
       } as const;
     });
@@ -639,6 +675,22 @@ export class AssessmentWorkflow {
       const reason: "blocked_by_price" | "blocked_by_policy" = purchaseCandidatesBeforePremium.length > 0
         ? "blocked_by_price"
         : "blocked_by_policy";
+      const policyReasons = assessedBeforeRanking
+        .filter(
+          (offer) =>
+            offer.offerEquivalent &&
+            offer.checkoutQuote.purchaseAvailable &&
+            offer.evidenceEligible &&
+            !isPolicyEligible(offer.policy),
+        )
+        .map(
+          (offer) =>
+            `${offer.offer.merchant}: ${policyBlockingExplanation(offer.policy).replace(/^Blocked: /, "")}`,
+        );
+      const blockingMessage =
+        purchaseCandidatesBeforePremium.length > 0 || policyReasons.length === 0
+          ? message
+          : `${message}: ${[...new Set(policyReasons)].join("; ")}`;
       const rankedOfferIds = purchaseCandidatesBeforePremium.map((offer) => offer.offer.id);
       const pendingReviewCandidates = usingCache
         ? undefined
@@ -651,14 +703,14 @@ export class AssessmentWorkflow {
         _tag: "err",
         error: {
           _tag: "NoEligibleOffer",
-          message,
+          message: blockingMessage,
           reason,
           record: this.blockedRecord(
             product,
             premiumLimitInr,
             safeDestinationReference,
             evidence,
-            message,
+            blockingMessage,
             reason,
             rankedOfferIds,
           ),
@@ -878,7 +930,7 @@ export class AssessmentWorkflow {
     const created = await this.adapters.authorization.create(authorization.id, {
       authorizationSnapshot: JSON.stringify(authorization),
       assessmentSnapshot: JSON.stringify(assessment),
-      state: "active",
+      state: "pending_registration",
     });
     if (created === "duplicate") {
       return { _tag: "err", reason: "authorization_id_conflict" };
@@ -897,11 +949,14 @@ export class AssessmentWorkflow {
       paymentMethod: authorization.paymentMethod,
     });
     if (registration === "unavailable") {
-      await this.adapters.authorization.transition(
-        authorization.id,
-        JSON.stringify(authorization),
-        "invalidated",
-      );
+      return { _tag: "err", reason: "authorization_unavailable" };
+    }
+    const activated = await this.adapters.authorization.transition(
+      authorization.id,
+      JSON.stringify(authorization),
+      "active",
+    );
+    if (activated !== "updated") {
       return { _tag: "err", reason: "authorization_unavailable" };
     }
     return { _tag: "ok", value: authorization };
@@ -924,6 +979,9 @@ export class AssessmentWorkflow {
     }
     if (stored.value.state === "used") {
       return { _tag: "err", reason: "authorization_used" };
+    }
+    if (stored.value.state === "pending_registration") {
+      return { _tag: "err", reason: "authorization_invalid" };
     }
     if (stored.value.state === "invalidated") {
       return { _tag: "err", reason: "authorization_invalid" };
@@ -1242,28 +1300,98 @@ export class AssessmentWorkflow {
     return { _tag: "ok", value: record };
   }
 
-  private hasCompleteEvidence(product: Product, evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
-    return SUPPORTED_OFFERS.every((offer) => {
-      const snapshots = evidence.filter((snapshot) => snapshot.offerId === offer.id);
-      const snapshot = snapshots[0];
-      return (
-        snapshots.length === 1 &&
-        snapshot !== undefined &&
-        OFFICIAL_EVIDENCE_SOURCES.some(
-          (source) =>
-            source.offerId === offer.id &&
-            source.merchant === snapshot.merchant &&
-            source.sourceUrl === snapshot.sourceUrl &&
-            source.scope.kind === snapshot.scope.kind &&
-            source.scope.value === snapshot.scope.value,
-        ) &&
-        this.adapters.evidenceApplicability.appliesToProduct(product, snapshot) &&
-        snapshot.exactText.trim() !== "" &&
-        snapshot.fingerprint.trim() !== "" &&
-        Number.isFinite(Date.parse(snapshot.collectedAt)) &&
-        snapshot.retrievedVia === "senso"
+  private resolveApplicableEvidence(
+    product: Product,
+    evidence: ReadonlyArray<EvidenceSnapshot>,
+  ): EvidenceResolution {
+    if (
+      evidence.some(
+        (snapshot) => !SUPPORTED_OFFERS.some((offer) => offer.id === snapshot.offerId),
+      )
+    ) {
+      return { _tag: "incomplete" };
+    }
+
+    const controlling: Array<EvidenceSnapshot> = [];
+    for (const offer of SUPPORTED_OFFERS) {
+      const offerSnapshots = evidence.filter((snapshot) => snapshot.offerId === offer.id);
+      if (
+        offerSnapshots.length === 0 ||
+        offerSnapshots.some((snapshot) => !this.isCompleteSnapshotForOffer(offer, snapshot))
+      ) {
+        return { _tag: "incomplete" };
+      }
+      const applicable = offerSnapshots.filter((snapshot) =>
+        this.adapters.evidenceApplicability.appliesToProduct(product, snapshot),
       );
+      if (applicable.length === 0) return { _tag: "incomplete" };
+      const highestScope = applicable.some((snapshot) => snapshot.scope.kind === "product")
+        ? "product"
+        : "category";
+      const highestScopeSnapshots = applicable
+        .filter((snapshot) => snapshot.scope.kind === highestScope)
+        .filter((snapshot, index, snapshots) =>
+          snapshots.findIndex((candidate) => this.sameEvidenceSnapshot(candidate, snapshot)) === index,
+        );
+      if (highestScopeSnapshots.length > 1) return { _tag: "conflict", offer };
+      const snapshot = highestScopeSnapshots[0];
+      if (snapshot === undefined) return { _tag: "incomplete" };
+      controlling.push(snapshot);
+    }
+    return { _tag: "ok", evidence: controlling };
+  }
+
+  private prepareEvidenceCache(
+    product: Product,
+    cache: ReviewedEvidenceCache,
+  ): PreparedEvidenceCache | undefined {
+    if (cache.snapshots.some((snapshot) => snapshot.retrievalState === "stale")) return undefined;
+    const resolution = this.resolveApplicableEvidence(product, cache.snapshots);
+    if (resolution._tag !== "ok" || cache.reviews.length !== resolution.evidence.length) {
+      return undefined;
+    }
+    const reviews = resolution.evidence.flatMap((snapshot) => {
+      const matches = cache.reviews.filter((review) =>
+        review.fingerprint === snapshot.fingerprint && this.isApplicableReview(snapshot, review),
+      );
+      return matches.length === 1 ? matches : [];
     });
+    return reviews.length === resolution.evidence.length
+      ? { snapshots: resolution.evidence, reviews }
+      : undefined;
+  }
+
+  private isCompleteSnapshotForOffer(offer: Offer, snapshot: EvidenceSnapshot): boolean {
+    return (
+      snapshot.offerId === offer.id &&
+      snapshot.merchant === offer.merchant &&
+      snapshot.sourceUrl.trim() !== "" &&
+      (snapshot.scope.kind === "product" || snapshot.scope.kind === "category") &&
+      snapshot.scope.value.trim() !== "" &&
+      snapshot.collectedAt.trim() !== "" &&
+      Number.isFinite(Date.parse(snapshot.collectedAt)) &&
+      snapshot.exactText.trim() !== "" &&
+      snapshot.fingerprint.trim() !== "" &&
+      snapshot.retrievedVia === "senso" &&
+      (snapshot.retrievalState === "current" ||
+        snapshot.retrievalState === "cached" ||
+        snapshot.retrievalState === "stale")
+    );
+  }
+
+  private sameEvidenceSnapshot(left: EvidenceSnapshot, right: EvidenceSnapshot): boolean {
+    return (
+      left.offerId === right.offerId &&
+      left.merchant === right.merchant &&
+      left.sourceUrl === right.sourceUrl &&
+      left.scope.kind === right.scope.kind &&
+      left.scope.value === right.scope.value &&
+      left.collectedAt === right.collectedAt &&
+      left.exactText === right.exactText &&
+      left.fingerprint === right.fingerprint &&
+      left.retrievedVia === right.retrievedVia &&
+      left.retrievalState === right.retrievalState
+    );
   }
 
   private hasCompleteApprovalSummary(summary: ApprovalSummary): boolean {

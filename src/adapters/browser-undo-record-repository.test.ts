@@ -98,4 +98,39 @@ describe("browser Undo Record repository", () => {
 
     expect(await createBrowserUndoRecordRepository(storage, locks).find(contaminated.id)).toBeUndefined();
   });
+
+  it("validates and projects the complete record before writing any contaminated or non-opaque data", async () => {
+    const storage = memoryStorage();
+    const repository = createBrowserUndoRecordRepository(storage, locks);
+    const evidence = {
+      offerId: "headphone-zone" as const,
+      merchant: "Headphone Zone",
+      sourceUrl: "https://merchant.example/policy",
+      scope: { kind: "category" as const, value: "Headphones" },
+      collectedAt: "2026-08-01T10:00:00.000Z",
+      exactText: "Official policy wording.",
+      fingerprint: "sha256:record-evidence",
+      retrievedVia: "senso" as const,
+      retrievalState: "current" as const,
+    };
+
+    const contaminatedRecord = { ...completedRecord(), paymentCredential: "record-secret-canary" };
+    expect(await repository.save(contaminatedRecord)).toBe("unavailable");
+    const contaminatedEvidence = { ...evidence, fullAddress: "nested-address-canary" };
+    expect(
+      await repository.save({
+        ...completedRecord(),
+        evidence: [contaminatedEvidence],
+      }),
+    ).toBe("unavailable");
+    expect(
+      await repository.save({
+        ...completedRecord(),
+        destinationReference: "destination-ref-12-example-street-bengaluru-560001",
+      }),
+    ).toBe("unavailable");
+    expect(await repository.save({ ...completedRecord(), pravaStatus: "not_submitted" })).toBe("unavailable");
+    expect(storage.values.size).toBe(0);
+    expect([...storage.values.values()].join(" ")).not.toMatch(/record-secret-canary|nested-address-canary/i);
+  });
 });

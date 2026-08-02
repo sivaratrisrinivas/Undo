@@ -72,10 +72,18 @@ export function createSensoEvidenceAdapter(options?: {
   return {
     async retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>> {
       try {
+        const productProjection: Product = {
+          manufacturer: product.manufacturer,
+          model: product.model,
+          variant: product.variant,
+          condition: product.condition,
+          bundleContents: product.bundleContents,
+          warrantyRegion: product.warrantyRegion,
+        };
         const response = await fetcher(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ product }),
+          body: JSON.stringify({ product: productProjection }),
         });
         if (!response.ok) throw new Error(`Senso evidence endpoint returned ${response.status}`);
         const payload: unknown = await response.json();

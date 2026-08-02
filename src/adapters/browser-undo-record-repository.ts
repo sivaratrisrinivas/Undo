@@ -30,6 +30,14 @@ function nullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function isOpaqueDestinationReference(value: unknown): value is string {
+  return (
+    value === "destination-ref-prava-default" ||
+    (typeof value === "string" && /^addr_[A-Za-z0-9_-]{1,200}$/.test(value)) ||
+    (typeof value === "string" && /^destination-ref-[0-9a-f]{8}$/.test(value))
+  );
+}
+
 function validEvidenceSnapshot(value: unknown): boolean {
   const evidence = object(value);
   const scope = object(evidence?.scope);
@@ -48,10 +56,7 @@ function validEvidenceSnapshot(value: unknown): boolean {
       evidence.retrievalState === "stale");
 }
 
-function parseStoredRecord(serialized: string | null): UndoRecord | undefined {
-  if (serialized === null) return undefined;
-  try {
-    const value: unknown = JSON.parse(serialized);
+function parseStoredRecordValue(value: unknown): UndoRecord | undefined {
     const record = object(value);
     const product = object(record?.product);
     const recommendation = object(record?.recommendation);
@@ -80,6 +85,7 @@ function parseStoredRecord(serialized: string | null): UndoRecord | undefined {
       !hasOnlyKeys(product, ["manufacturer", "model", "variant", "condition", "bundleContents", "warrantyRegion"]) ||
       !hasOnlyKeys(recommendation, ["rankedOfferIds", "selectedOfferId", "selection", "rankingRules"]) ||
       !hasOnlyKeys(versions, ["policySchema", "extractionPrompt", "model", "rankingRules"]) ||
+      (record.previousSandboxPurchase !== undefined && previousPurchase === undefined) ||
       (previousPurchase !== undefined &&
         !hasOnlyKeys(previousPurchase, ["purchasedAt", "merchantOrderIdentifier"])) ||
       typeof record.id !== "string" || record.id.trim() === "" ||
@@ -89,7 +95,7 @@ function parseStoredRecord(serialized: string | null): UndoRecord | undefined {
         .every((key) => typeof product[key] === "string") ||
       !nullableString(record.selectedMerchant) || !nullableString(record.selectedSeller) ||
       !nullableFinite(record.confirmedCheckoutTotalInr) || !finiteNonNegative(record.premiumLimitInr) ||
-      typeof record.destinationReference !== "string" || !Array.isArray(record.evidence) ||
+      !isOpaqueDestinationReference(record.destinationReference) || !Array.isArray(record.evidence) ||
       !record.evidence.every(validEvidenceSnapshot) ||
       !Array.isArray(recommendation.rankedOfferIds) ||
       !recommendation.rankedOfferIds.every((id) => typeof id === "string") ||
@@ -138,7 +144,69 @@ function parseStoredRecord(serialized: string | null): UndoRecord | undefined {
       return undefined;
     }
     // SAFETY: Every UndoRecord field used by persistence/history and all lifecycle discriminants are checked above.
-    return record as UndoRecord;
+    const parsed = record as UndoRecord;
+    return {
+      id: parsed.id,
+      createdAt: parsed.createdAt,
+      outcome: parsed.outcome,
+      product: {
+        manufacturer: parsed.product.manufacturer,
+        model: parsed.product.model,
+        variant: parsed.product.variant,
+        condition: parsed.product.condition,
+        bundleContents: parsed.product.bundleContents,
+        warrantyRegion: parsed.product.warrantyRegion,
+      },
+      selectedMerchant: parsed.selectedMerchant,
+      selectedSeller: parsed.selectedSeller,
+      confirmedCheckoutTotalInr: parsed.confirmedCheckoutTotalInr,
+      premiumLimitInr: parsed.premiumLimitInr,
+      destinationReference: parsed.destinationReference,
+      evidence: parsed.evidence.map((snapshot) => ({
+        offerId: snapshot.offerId,
+        merchant: snapshot.merchant,
+        sourceUrl: snapshot.sourceUrl,
+        scope: { kind: snapshot.scope.kind, value: snapshot.scope.value },
+        collectedAt: snapshot.collectedAt,
+        exactText: snapshot.exactText,
+        fingerprint: snapshot.fingerprint,
+        retrievedVia: snapshot.retrievedVia,
+        retrievalState: snapshot.retrievalState,
+      })),
+      recommendation: {
+        rankedOfferIds: [...parsed.recommendation.rankedOfferIds],
+        selectedOfferId: parsed.recommendation.selectedOfferId,
+        selection: parsed.recommendation.selection,
+        rankingRules: parsed.recommendation.rankingRules,
+      },
+      authorizationId: parsed.authorizationId,
+      authorizationState: parsed.authorizationState,
+      approvedMaximumTotalInr: parsed.approvedMaximumTotalInr,
+      pravaStatus: parsed.pravaStatus,
+      merchantOrderIdentifier: parsed.merchantOrderIdentifier,
+      ...(parsed.previousSandboxPurchase === undefined
+        ? {}
+        : {
+            previousSandboxPurchase: {
+              purchasedAt: parsed.previousSandboxPurchase.purchasedAt,
+              merchantOrderIdentifier: parsed.previousSandboxPurchase.merchantOrderIdentifier,
+            },
+          }),
+      ...(parsed.blockingReason === undefined ? {} : { blockingReason: parsed.blockingReason }),
+      assumptions: [...parsed.assumptions],
+      versions: {
+        policySchema: parsed.versions.policySchema,
+        extractionPrompt: parsed.versions.extractionPrompt,
+        model: parsed.versions.model,
+        rankingRules: parsed.versions.rankingRules,
+      },
+    };
+}
+
+function parseStoredRecord(serialized: string | null): UndoRecord | undefined {
+  if (serialized === null) return undefined;
+  try {
+    return parseStoredRecordValue(JSON.parse(serialized));
   } catch {
     return undefined;
   }
@@ -166,9 +234,11 @@ export function createBrowserUndoRecordRepository(
     async save(record) {
       try {
         return await locks.request(INDEX_KEY, () => {
+          const projected = parseStoredRecordValue(record);
+          if (projected === undefined) return "unavailable" as const;
           const ids = parseIndex(storage.getItem(INDEX_KEY));
-          storage.setItem(recordKey(record.id), JSON.stringify(record));
-          if (!ids.includes(record.id)) storage.setItem(INDEX_KEY, JSON.stringify([...ids, record.id]));
+          storage.setItem(recordKey(projected.id), JSON.stringify(projected));
+          if (!ids.includes(projected.id)) storage.setItem(INDEX_KEY, JSON.stringify([...ids, projected.id]));
           return "saved" as const;
         });
       } catch {

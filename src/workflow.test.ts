@@ -81,7 +81,11 @@ function makeAdapters(
     },
     prava: {
       registerCheckout: () => Promise.resolve("registered"),
-      quoteOffers: () => Promise.resolve({ _tag: "ok", value: quotes }),
+      quoteOffers: (_offers, destinationReference) =>
+        Promise.resolve({
+          _tag: "ok",
+          value: quotes.map((quote) => ({ ...quote, destinationReference })),
+        }),
       submitCheckout: () =>
         Promise.resolve({
           _tag: "submitted",
