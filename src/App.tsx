@@ -7,11 +7,13 @@ import { StageProgress } from "./components/StageProgress";
 import {
   parsePremiumLimitInr,
   resolveSupportedProduct,
+  type ApprovalSummary,
   type BuyerOfferSelection,
   type EvidenceReview,
   type EvidenceSnapshot,
   type PolicyAssessment,
   type Product,
+  type PurchaseAuthorization,
   type ReversibilityAssessment,
   type UndoRecord,
 } from "./domain";
@@ -43,6 +45,8 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
   const [destinationReference, setDestinationReference] = useState("destination-ref-prava-default");
   const [assessment, setAssessment] = useState<ReversibilityAssessment>();
   const [selectedOffer, setSelectedOffer] = useState<BuyerOfferSelection>();
+  const [approvalSummary, setApprovalSummary] = useState<ApprovalSummary>();
+  const [authorization, setAuthorization] = useState<PurchaseAuthorization>();
   const [record, setRecord] = useState<UndoRecord>();
   const [reviewCandidates, setReviewCandidates] = useState<ReadonlyArray<{
     readonly snapshot: EvidenceSnapshot;
@@ -103,6 +107,8 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     setSelectedOffer(
       initialSelection?._tag === "ok" ? initialSelection.value : undefined,
     );
+    setApprovalSummary(undefined);
+    setAuthorization(undefined);
     setAcknowledgedWarnings(new Set());
     setStage("comparison");
   }
@@ -112,7 +118,38 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     const result = workflow.selectOffer(assessment, offerId);
     if (result._tag === "err") return;
     setSelectedOffer(result.value);
+    setApprovalSummary(undefined);
+    setAuthorization(undefined);
     setAcknowledgedWarnings(new Set());
+  }
+
+  function reviewApprovalSummary() {
+    if (assessment === undefined || selectedOffer === undefined) return;
+    const result = workflow.createApprovalSummary(assessment, selectedOffer);
+    if (result._tag === "err") {
+      setError("Purchase Authorization is unavailable because the Approval Summary is incomplete or blocked.");
+      return;
+    }
+    setError(undefined);
+    setApprovalSummary(result.value);
+    setAcknowledgedWarnings(new Set());
+    setStage("approval");
+  }
+
+  function authorizePurchase() {
+    if (assessment === undefined || selectedOffer === undefined) return;
+    const result = workflow.authorizePurchase(
+      assessment,
+      selectedOffer,
+      acknowledgedWarnings,
+    );
+    if (result._tag === "err") {
+      setError("Purchase Authorization is unavailable until the exact summary and every Material Warning are approved.");
+      return;
+    }
+    setError(undefined);
+    setAuthorization(result.value);
+    setStage("checkout");
   }
 
   async function approveEvidence() {
@@ -131,7 +168,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     if (assessment === undefined || selectedOffer === undefined) {
       return;
     }
-    setRecord(workflow.decline(assessment, selectedOffer));
+    setRecord(workflow.decline(assessment, selectedOffer, authorization));
     setStage("record");
   }
 
@@ -162,9 +199,9 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
           {stage === "constraints" && product !== undefined && <ConstraintsStage destinationReference={destinationReference} error={error} loading={loading} premiumLimit={premiumLimit} onCompare={() => void compareOffers()} onDestinationChange={setDestinationReference} onPremiumLimitChange={setPremiumLimit} />}
           {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOffer={selectedOffer} onContinue={() => setStage("evidence")} onSelect={(offer) => selectOffer(offer.offer.id)} />}
           {stage === "review" && <EvidenceReviewStage candidates={reviewCandidates} loading={loading} onApprove={() => void approveEvidence()} />}
-          {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={() => setStage("approval")} />}
-          {stage === "approval" && assessment !== undefined && selectedOffer !== undefined && <ApprovalStage assessment={assessment} selectedOffer={selectedOffer.offer} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warning, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warning); else next.delete(warning); return next; })} onContinue={() => setStage("checkout")} />}
-          {stage === "checkout" && selectedOffer !== undefined && <CheckoutStage selectedOffer={selectedOffer.offer} onDecline={declinePurchase} />}
+          {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={reviewApprovalSummary} />}
+          {stage === "approval" && approvalSummary !== undefined && selectedOffer !== undefined && <ApprovalStage summary={approvalSummary} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warningId, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warningId); else next.delete(warningId); return next; })} onAuthorize={authorizePurchase} />}
+          {stage === "checkout" && authorization !== undefined && <CheckoutStage authorization={authorization} onDecline={declinePurchase} />}
           {stage === "record" && record !== undefined && <RecordStage record={record} />}
         </section>
       </main>

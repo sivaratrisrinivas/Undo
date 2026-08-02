@@ -93,6 +93,7 @@ function makeAdapters(
       saveCache: () => Promise.resolve(),
     },
     now: () => "2026-08-01T12:00:00.000Z",
+    nextAuthorizationId: () => "ranking-authorization",
     nextRecordId: () => "ranking-test",
   };
 }
@@ -116,6 +117,7 @@ function quoteFor(offerId: Offer["id"], totalInr: number, purchaseAvailable: boo
     offerId,
     merchant: offer.merchant,
     seller: offer.seller,
+    destinationReference: "destination-ref-test",
     product: SUPPORTED_PRODUCT,
     itemTotalInr: totalInr - 500,
     deliveryInr: 300,

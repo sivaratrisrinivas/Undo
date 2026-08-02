@@ -154,6 +154,7 @@ export type CheckoutQuote = {
   readonly offerId: Offer["id"];
   readonly merchant: string;
   readonly seller: string;
+  readonly destinationReference: string;
   readonly product: Product;
   readonly itemTotalInr: number;
   readonly deliveryInr: number;
@@ -195,6 +196,132 @@ export type BuyerOfferSelection = {
 export type BuyerOfferSelectionResult =
   | { readonly _tag: "ok"; readonly value: BuyerOfferSelection }
   | { readonly _tag: "err"; readonly reason: "offer_not_found" | "offer_not_eligible" };
+
+/** A non-blocking limitation the buyer must acknowledge individually. */
+export type MaterialWarning = {
+  readonly id: string;
+  readonly kind: "unopened_only" | "unstated_cost" | "remedy_condition";
+  readonly detail: string;
+};
+
+/** The complete buyer-visible purchase facts covered by explicit approval. */
+export type ApprovalSummary = {
+  readonly product: Product;
+  readonly quantity: 1;
+  readonly offerId: Offer["id"];
+  readonly merchant: string;
+  readonly seller: string;
+  readonly destinationReference: string;
+  readonly confirmedCheckoutTotalInr: number;
+  readonly maximumTotalInr: number;
+  readonly premiumLimitInr: number;
+  readonly remedy: "money_back" | "store_credit";
+  readonly trialPermission: boolean;
+  readonly remedyWindow: {
+    readonly days: number;
+    readonly startsAt: "ordered" | "purchased" | "delivered";
+    readonly requiredAction: "request_submitted" | "item_shipped" | "item_received";
+  };
+  readonly returnTransport: "doorstep_pickup" | "self_ship";
+  readonly buyerPaidCosts: Exclude<
+    PolicyAssessment["reversalCost"],
+    { readonly kind: "unclear" } | { readonly kind: "unpriced_required" }
+  >;
+  readonly evidence: {
+    readonly collectedAt: string;
+    readonly retrievalState: "current" | "cached";
+  };
+  readonly materialConditions: ReadonlyArray<string>;
+  readonly materialWarnings: ReadonlyArray<MaterialWarning>;
+};
+
+/** Typed outcome of deriving a complete Approval Summary from a validated selection. */
+export type ApprovalSummaryResult =
+  | { readonly _tag: "ok"; readonly value: ApprovalSummary }
+  | {
+      readonly _tag: "err";
+      readonly reason: "selection_mismatch" | "summary_incomplete" | "purchase_blocked";
+    };
+
+/** The supported Prava checkout method bound to buyer approval. */
+export type AuthorizedPaymentMethod = "prava_one_time_prepaid";
+
+/** The active, secret-free permission for exactly one checkout submission. */
+export type PurchaseAuthorization = {
+  readonly id: string;
+  readonly state: "active";
+  readonly issuedAt: string;
+  readonly expiresAt: string;
+  readonly binding: {
+    readonly product: Product;
+    readonly quantity: 1;
+    readonly offerId: Offer["id"];
+    readonly merchant: string;
+    readonly seller: string;
+    readonly destinationReference: string;
+    readonly maximumTotalInr: number;
+    readonly premiumLimitInr: number;
+    readonly assessmentFingerprint: string;
+  };
+  readonly paymentMethod: AuthorizedPaymentMethod;
+  readonly acknowledgedWarningIds: ReadonlyArray<string>;
+};
+
+/** A Purchase Authorization after its one permitted checkout claim. */
+export type UsedPurchaseAuthorization = Omit<PurchaseAuthorization, "state"> & {
+  readonly state: "used";
+  readonly usedAt: string;
+};
+
+/** Typed outcome of the buyer's Purchase Authorization request. */
+export type PurchaseAuthorizationResult =
+  | { readonly _tag: "ok"; readonly value: PurchaseAuthorization }
+  | {
+      readonly _tag: "err";
+      readonly reason: "selection_mismatch" | "summary_incomplete" | "purchase_blocked";
+    }
+  | {
+      readonly _tag: "err";
+      readonly reason: "missing_warning_acknowledgements";
+      readonly missingWarningIds: ReadonlyArray<string>;
+    };
+
+/** Candidate checkout facts checked immediately before the single submission. */
+export type CheckoutSubmissionClaim = {
+  readonly authorization: PurchaseAuthorization;
+  readonly assessment: ReversibilityAssessment;
+  readonly selectedOffer: BuyerOfferSelection;
+  readonly quote: CheckoutQuote;
+  readonly quantity: number;
+  readonly paymentMethod: string;
+};
+
+/** Typed outcome of claiming an authorization for checkout submission. */
+export type CheckoutSubmissionClaimResult =
+  | {
+      readonly _tag: "ok";
+      readonly value: {
+        readonly authorization: UsedPurchaseAuthorization;
+        readonly quote: CheckoutQuote;
+        readonly paymentMethod: AuthorizedPaymentMethod;
+      };
+    }
+  | {
+      readonly _tag: "err";
+      readonly reason:
+        | "authorization_invalid"
+        | "authorization_used"
+        | "authorization_expired"
+        | "unsupported_payment_method"
+        | "quantity_changed"
+        | "product_changed"
+        | "merchant_changed"
+        | "seller_changed"
+        | "destination_changed"
+        | "approval_changed"
+        | "quote_invalid"
+        | "total_exceeded";
+    };
 
 /** The completed assessment data shown before a purchase decision. */
 export type ReversibilityAssessment = {
@@ -240,7 +367,7 @@ export type UndoRecord = {
     readonly selection: "ranking_winner" | "buyer_selected_tie" | "buyer_override" | "none";
     readonly rankingRules: "remedy-ranking/1.0";
   };
-  readonly authorizationState: "not_requested";
+  readonly authorizationState: "not_requested" | "authorized_not_submitted";
   readonly blockingReason?: string;
   readonly assumptions: ReadonlyArray<string>;
   readonly versions: {

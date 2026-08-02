@@ -1,15 +1,22 @@
 import type {
+  ApprovalSummary,
+  ApprovalSummaryResult,
   AssessedOffer,
   BuyerOfferSelection,
   BuyerOfferSelectionResult,
+  CheckoutSubmissionClaim,
+  CheckoutSubmissionClaimResult,
   CheckoutQuote,
   EvidenceSnapshot,
   EvidenceReview,
+  MaterialWarning,
   Offer,
   PolicyAssessment,
   PremiumLimitInr,
   Product,
   ProductEquivalence,
+  PurchaseAuthorizationResult,
+  PurchaseAuthorization,
   ReversibilityAssessment,
   ReviewedEvidenceCache,
   UndoRecord,
@@ -50,6 +57,7 @@ export type AssessmentAdapters = {
     saveCache(cache: ReviewedEvidenceCache): Promise<void>;
   };
   readonly now: () => string;
+  readonly nextAuthorizationId: () => string;
   readonly nextRecordId: () => string;
 };
 
@@ -212,11 +220,25 @@ function opaqueDestinationReference(input: string): string {
   return `destination-ref-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function stableFingerprint(value: string): string {
+  let hash = 2_166_136_261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function assessmentFingerprint(assessment: ReversibilityAssessment): string {
+  return `assessment:${stableFingerprint(JSON.stringify(assessment))}`;
+}
+
 function missingQuoteFor(offer: Offer): CheckoutQuote {
   return {
     offerId: offer.id,
     merchant: offer.merchant,
     seller: offer.seller,
+    destinationReference: "destination-ref-unknown",
     product: {
       manufacturer: "",
       model: "",
@@ -255,6 +277,15 @@ function formatProductMismatches(equivalence: ProductEquivalence): string {
 
 /** Coordinates the high-level assessment while keeping external behavior injectable. */
 export class AssessmentWorkflow {
+  private readonly authorizations = new Map<
+    string,
+    {
+      readonly authorizationSnapshot: string;
+      readonly assessmentSnapshot: string;
+      state: "active" | "used";
+    }
+  >();
+
   constructor(private readonly adapters: AssessmentAdapters) {}
 
   /** Saves a human approval for the extracted facts tied to one exact fingerprint. */
@@ -460,9 +491,15 @@ export class AssessmentWorkflow {
       const sellerMatches = checkoutQuote.seller === offer.seller;
       const offerEquivalent = productEquivalence.equivalent && merchantMatches && sellerMatches;
       const quoteHasValidBreakdown = hasValidQuoteBreakdown(checkoutQuote);
+      const destinationMatches = checkoutQuote.destinationReference === safeDestinationReference;
       const normalizedQuote =
-        checkoutQuote.purchaseAvailable && !quoteHasValidBreakdown
-          ? unavailableQuote(checkoutQuote, "Prava returned an inconsistent checkout total")
+        checkoutQuote.purchaseAvailable && (!quoteHasValidBreakdown || !destinationMatches)
+          ? unavailableQuote(
+              checkoutQuote,
+              !destinationMatches
+                ? "Prava returned a quote for a different Delivery Destination"
+                : "Prava returned an inconsistent checkout total",
+            )
           : checkoutQuote;
       const evidenceReviewed = this.isApplicableReview(
         snapshot,
@@ -493,8 +530,8 @@ export class AssessmentWorkflow {
               : `Seller changed: expected ${offer.seller}, received ${checkoutQuote.seller}`
           : !normalizedQuote.purchaseAvailable
             ? normalizedQuote.unavailableReason ?? "Purchase Unavailable"
-            : !quoteHasValidBreakdown
-              ? "Purchase Unavailable: Prava returned an inconsistent checkout total"
+            : !quoteHasValidBreakdown || !destinationMatches
+              ? normalizedQuote.unavailableReason ?? "Purchase Unavailable"
               : !evidenceReviewed
                 ? "Blocked: Policy Evidence requires human review"
                 : !evidenceFresh
@@ -680,8 +717,239 @@ export class AssessmentWorkflow {
     return { _tag: "ok", value: { offer, selection } };
   }
 
+  /** Derives the complete buyer-visible approval facts from a validated Offer selection. */
+  createApprovalSummary(
+    assessment: ReversibilityAssessment,
+    selectedOffer: BuyerOfferSelection,
+  ): ApprovalSummaryResult {
+    const validatedSelection = this.selectOffer(assessment, selectedOffer.offer.offer.id);
+    if (
+      validatedSelection._tag === "err" ||
+      validatedSelection.value.selection !== selectedOffer.selection
+    ) {
+      return { _tag: "err", reason: "selection_mismatch" };
+    }
+    const offer = validatedSelection.value.offer;
+    const policy = offer.policy;
+    if (
+      policy.remedyWindow.kind !== "known" ||
+      policy.changeOfMind === "none" ||
+      policy.changeOfMind === "unclear" ||
+      policy.returnTransport === "unclear" ||
+      policy.reversalCost.kind === "unclear" ||
+      policy.reversalCost.kind === "unpriced_required" ||
+      offer.evidence.retrievalState === "stale"
+    ) {
+      return { _tag: "err", reason: "summary_incomplete" };
+    }
+
+    let hasUnopenedWarning = false;
+    const materialWarnings: Array<MaterialWarning> = policy.materialConditions.map(
+      (condition, index) => {
+        const representsUnopenedRestriction =
+          policy.productCondition === "unopened_only" &&
+          !hasUnopenedWarning &&
+          /\b(unopened|sealed)\b/i.test(condition.detail);
+        if (representsUnopenedRestriction) hasUnopenedWarning = true;
+        return {
+          id: representsUnopenedRestriction ? "unopened-only" : `remedy-condition:${index + 1}`,
+          kind: representsUnopenedRestriction ? "unopened_only" : "remedy_condition",
+          detail: condition.detail,
+        };
+      },
+    );
+    if (policy.productCondition === "unopened_only" && !hasUnopenedWarning) {
+      materialWarnings.push({
+        id: "unopened-only",
+        kind: "unopened_only",
+        detail: "The Product must remain unopened to keep the remedy.",
+      });
+    }
+    if (policy.reversalCost.kind === "unstated") {
+      materialWarnings.push({
+        id: "unstated-cost",
+        kind: "unstated_cost",
+        detail: "No fee stated—cost uncertain.",
+      });
+    }
+
+    const summary: ApprovalSummary = {
+      product: assessment.product,
+      quantity: 1,
+      offerId: offer.offer.id,
+      merchant: offer.offer.merchant,
+      seller: offer.offer.seller,
+      destinationReference: assessment.destinationReference,
+      confirmedCheckoutTotalInr: offer.checkoutQuote.totalInr,
+      maximumTotalInr: offer.checkoutQuote.totalInr,
+      premiumLimitInr: assessment.premiumLimitInr,
+      remedy: policy.changeOfMind,
+      trialPermission: policy.productCondition === "trial_allowed",
+      remedyWindow: policy.remedyWindow,
+      returnTransport: policy.returnTransport,
+      buyerPaidCosts: policy.reversalCost,
+      evidence: {
+        collectedAt: offer.evidence.collectedAt,
+        retrievalState: offer.evidence.retrievalState,
+      },
+      materialConditions: policy.materialConditions.map((condition) => condition.detail),
+      materialWarnings,
+    };
+    if (!this.hasCompleteApprovalSummary(summary)) {
+      return { _tag: "err", reason: "summary_incomplete" };
+    }
+    return { _tag: "ok", value: summary };
+  }
+
+  /** Converts explicit per-warning approval into a Purchase Authorization. */
+  authorizePurchase(
+    assessment: ReversibilityAssessment,
+    selectedOffer: BuyerOfferSelection,
+    acknowledgedWarningIds: ReadonlySet<string>,
+  ): PurchaseAuthorizationResult {
+    if (!this.adapters.policyContract.purchaseEnabled()) {
+      return { _tag: "err", reason: "purchase_blocked" };
+    }
+    const summaryResult = this.createApprovalSummary(assessment, selectedOffer);
+    if (summaryResult._tag === "err") return summaryResult;
+    const missingWarningIds = summaryResult.value.materialWarnings
+      .filter((warning) => !acknowledgedWarningIds.has(warning.id))
+      .map((warning) => warning.id);
+    if (missingWarningIds.length > 0) {
+      return {
+        _tag: "err",
+        reason: "missing_warning_acknowledgements",
+        missingWarningIds,
+      };
+    }
+    const issuedAt = this.adapters.now();
+    const issuedAtMilliseconds = Date.parse(issuedAt);
+    if (!Number.isFinite(issuedAtMilliseconds)) {
+      throw new Error("The injected clock returned an invalid timestamp");
+    }
+    const authorization: PurchaseAuthorization = {
+      id: this.adapters.nextAuthorizationId(),
+      state: "active",
+      issuedAt,
+      expiresAt: new Date(issuedAtMilliseconds + 10 * 60 * 1_000).toISOString(),
+      binding: {
+        product: summaryResult.value.product,
+        quantity: summaryResult.value.quantity,
+        offerId: summaryResult.value.offerId,
+        merchant: summaryResult.value.merchant,
+        seller: summaryResult.value.seller,
+        destinationReference: summaryResult.value.destinationReference,
+        maximumTotalInr: summaryResult.value.maximumTotalInr,
+        premiumLimitInr: summaryResult.value.premiumLimitInr,
+        assessmentFingerprint: assessmentFingerprint(assessment),
+      },
+      paymentMethod: "prava_one_time_prepaid",
+      acknowledgedWarningIds: summaryResult.value.materialWarnings.map((warning) => warning.id),
+    };
+    if (this.authorizations.has(authorization.id)) {
+      throw new Error("The authorization ID generator returned a duplicate identifier");
+    }
+    this.authorizations.set(authorization.id, {
+      authorizationSnapshot: JSON.stringify(authorization),
+      assessmentSnapshot: JSON.stringify(assessment),
+      state: "active",
+    });
+    return { _tag: "ok", value: authorization };
+  }
+
+  /** Atomically claims the authorization before a caller submits one checkout attempt. */
+  claimCheckoutSubmission(claim: CheckoutSubmissionClaim): CheckoutSubmissionClaimResult {
+    const registered = this.authorizations.get(claim.authorization.id);
+    if (
+      registered === undefined ||
+      registered.authorizationSnapshot !== JSON.stringify(claim.authorization)
+    ) {
+      return { _tag: "err", reason: "authorization_invalid" };
+    }
+    if (registered.state === "used") {
+      return { _tag: "err", reason: "authorization_used" };
+    }
+    const now = Date.parse(this.adapters.now());
+    if (!Number.isFinite(now)) {
+      throw new Error("The injected clock returned an invalid timestamp");
+    }
+    if (now >= Date.parse(claim.authorization.expiresAt)) {
+      return { _tag: "err", reason: "authorization_expired" };
+    }
+    if (claim.paymentMethod !== claim.authorization.paymentMethod) {
+      return { _tag: "err", reason: "unsupported_payment_method" };
+    }
+    if (claim.quantity !== claim.authorization.binding.quantity) {
+      return { _tag: "err", reason: "quantity_changed" };
+    }
+    if (!compareProductIdentity(claim.authorization.binding.product, claim.assessment.product).equivalent) {
+      return { _tag: "err", reason: "product_changed" };
+    }
+    if (claim.selectedOffer.offer.offer.merchant !== claim.authorization.binding.merchant) {
+      return { _tag: "err", reason: "merchant_changed" };
+    }
+    if (claim.selectedOffer.offer.offer.seller !== claim.authorization.binding.seller) {
+      return { _tag: "err", reason: "seller_changed" };
+    }
+    if (claim.assessment.destinationReference !== claim.authorization.binding.destinationReference) {
+      return { _tag: "err", reason: "destination_changed" };
+    }
+    const selectedOfferResult = this.selectOffer(
+      claim.assessment,
+      claim.selectedOffer.offer.offer.id,
+    );
+    if (
+      selectedOfferResult._tag === "err" ||
+      selectedOfferResult.value.selection !== claim.selectedOffer.selection ||
+      claim.selectedOffer.offer.offer.id !== claim.authorization.binding.offerId ||
+      registered.assessmentSnapshot !== JSON.stringify(claim.assessment) ||
+      claim.assessment.premiumLimitInr !== claim.authorization.binding.premiumLimitInr
+    ) {
+      return { _tag: "err", reason: "approval_changed" };
+    }
+    if (
+      claim.quote.offerId !== claim.authorization.binding.offerId ||
+      !compareProductIdentity(claim.authorization.binding.product, claim.quote.product).equivalent
+    ) {
+      return { _tag: "err", reason: "product_changed" };
+    }
+    if (claim.quote.merchant !== claim.authorization.binding.merchant) {
+      return { _tag: "err", reason: "merchant_changed" };
+    }
+    if (claim.quote.seller !== claim.authorization.binding.seller) {
+      return { _tag: "err", reason: "seller_changed" };
+    }
+    if (claim.quote.destinationReference !== claim.authorization.binding.destinationReference) {
+      return { _tag: "err", reason: "destination_changed" };
+    }
+    if (!claim.quote.purchaseAvailable || !hasValidQuoteBreakdown(claim.quote)) {
+      return { _tag: "err", reason: "quote_invalid" };
+    }
+    if (claim.quote.totalInr > claim.authorization.binding.maximumTotalInr) {
+      return { _tag: "err", reason: "total_exceeded" };
+    }
+
+    registered.state = "used";
+    return {
+      _tag: "ok",
+      value: {
+        authorization: {
+          ...claim.authorization,
+          state: "used",
+          usedAt: this.adapters.now(),
+        },
+        quote: claim.quote,
+        paymentMethod: claim.authorization.paymentMethod,
+      },
+    };
+  }
+
   /** Records a buyer decision without submitting checkout. */
-  decline(assessment: ReversibilityAssessment, selectedOffer: BuyerOfferSelection): UndoRecord {
+  decline(
+    assessment: ReversibilityAssessment,
+    selectedOffer: BuyerOfferSelection,
+    authorization?: PurchaseAuthorization,
+  ): UndoRecord {
     return {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
@@ -702,7 +970,8 @@ export class AssessmentWorkflow {
         selection: selectedOffer.selection,
         rankingRules: "remedy-ranking/1.0",
       },
-      authorizationState: "not_requested",
+      authorizationState:
+        authorization === undefined ? "not_requested" : "authorized_not_submitted",
       assumptions: [
         "Each curated Offer was checked against the supported Product identity before any Purchase Authorization.",
         "Checkout totals were supplied by the configured Prava boundary for the selected destination.",
@@ -739,6 +1008,20 @@ export class AssessmentWorkflow {
         snapshot.retrievedVia === "senso"
       );
     });
+  }
+
+  private hasCompleteApprovalSummary(summary: ApprovalSummary): boolean {
+    return (
+      Object.values(summary.product).every((value) => value.trim() !== "") &&
+      summary.merchant.trim() !== "" &&
+      summary.seller.trim() !== "" &&
+      summary.destinationReference.trim() !== "" &&
+      Number.isFinite(summary.confirmedCheckoutTotalInr) &&
+      summary.confirmedCheckoutTotalInr >= 0 &&
+      Number.isFinite(summary.premiumLimitInr) &&
+      summary.premiumLimitInr >= 0 &&
+      Number.isFinite(Date.parse(summary.evidence.collectedAt))
+    );
   }
 
   private isApplicableReview(

@@ -24,6 +24,7 @@ function parseQuote(value: unknown): CheckoutQuote | undefined {
     !isOfferId(quote.offerId) ||
     typeof quote.merchant !== "string" ||
     typeof quote.seller !== "string" ||
+    typeof quote.destinationReference !== "string" ||
     typeof product.manufacturer !== "string" ||
     typeof product.model !== "string" ||
     typeof product.variant !== "string" ||

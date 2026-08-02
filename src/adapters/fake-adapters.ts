@@ -183,6 +183,7 @@ function quoteFor(
     offerId,
     merchant: offer.merchant,
     seller: offer.seller,
+    destinationReference: "destination-ref-prava-default",
     product: SUPPORTED_PRODUCT,
     itemTotalInr: totalInr - 500,
     deliveryInr: 300,
@@ -205,6 +206,7 @@ const quotes: ReadonlyArray<CheckoutQuote> = [
 /** Creates deterministic Senso, OpenAI, and Prava substitutes for the walking skeleton. */
 export function createFakeAdapters(options?: {
   readonly now?: string;
+  readonly authorizationId?: string;
   readonly recordId?: string;
   readonly failSenso?: boolean;
   readonly failOpenAi?: boolean;
@@ -269,6 +271,7 @@ export function createFakeAdapters(options?: {
     ]),
   );
   let cache: ReviewedEvidenceCache | undefined;
+  let authorizationSequence = 0;
 
   return {
     activity,
@@ -308,7 +311,7 @@ export function createFakeAdapters(options?: {
       },
     },
     prava: {
-      quoteOffers() {
+      quoteOffers(_offers, destinationReference) {
         activity.pravaQuoteRequests += 1;
         if (options?.failPravaQuote === true) {
           return Promise.resolve({
@@ -334,6 +337,7 @@ export function createFakeAdapters(options?: {
             : quotes;
         const overriddenQuotes = scenarioQuotes.map((quote) => ({
           ...quote,
+          destinationReference,
           ...options?.quoteOverrides?.[quote.offerId],
         }));
         return Promise.resolve({ _tag: "ok" as const, value: overriddenQuotes });
@@ -367,6 +371,10 @@ export function createFakeAdapters(options?: {
       },
     },
     now: () => options?.now ?? "2026-08-01T12:00:00.000Z",
+    nextAuthorizationId: () => {
+      authorizationSequence += 1;
+      return options?.authorizationId ?? `purchase-authorization-demo-${authorizationSequence}`;
+    },
     nextRecordId: () => options?.recordId ?? "undo-demo-record",
   };
 }

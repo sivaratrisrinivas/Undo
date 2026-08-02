@@ -7,6 +7,7 @@ const quote: CheckoutQuote = {
   offerId: "headphone-zone",
   merchant: "Headphone Zone",
   seller: "Headphone Zone",
+  destinationReference: "addr_home1",
   product: SUPPORTED_PRODUCT,
   itemTotalInr: 12_990,
   deliveryInr: 0,

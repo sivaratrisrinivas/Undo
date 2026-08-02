@@ -1,4 +1,4 @@
-import type { AssessedOffer, BuyerOfferSelection, EvidenceSnapshot, PolicyAssessment, ReversibilityAssessment } from "../domain";
+import type { ApprovalSummary, AssessedOffer, BuyerOfferSelection, EvidenceSnapshot, PolicyAssessment, ReversibilityAssessment } from "../domain";
 import { EvidenceCard } from "./EvidenceCard";
 import {
   formatChangeOfMind,
@@ -143,41 +143,48 @@ export function EvidenceReviewStage(props: {
 
 /** Renders the exact recommendation and required Material Warning acknowledgement. */
 export function ApprovalStage(props: {
-  readonly assessment: ReversibilityAssessment;
-  readonly selectedOffer: AssessedOffer;
+  readonly summary: ApprovalSummary;
   readonly selection: BuyerOfferSelection["selection"];
   readonly purchaseEnabled: boolean;
   readonly acknowledgedWarnings: ReadonlySet<string>;
-  readonly onAcknowledgementChange: (warning: string, checked: boolean) => void;
-  readonly onContinue: () => void;
+  readonly onAcknowledgementChange: (warningId: string, checked: boolean) => void;
+  readonly onAuthorize: () => void;
 }) {
-  const policy = props.selectedOffer.policy;
-  const remedy = policy.changeOfMind === "money_back" ? "Change-of-mind money back" : "Change-of-mind store credit";
-  const condition = policy.productCondition === "trial_allowed" ? "Trial permitted" : formatProductCondition(policy);
-  const transport = formatReturnTransport(policy);
-  const cost = formatReversalCost(policy);
-  const window = formatRemedyWindow(policy);
-  const warnings = [
-    ...policy.materialConditions.map((condition) => condition.detail),
-    ...(policy.reversalCost.kind === "unstated" ? ["No fee stated—cost uncertain."] : []),
-  ];
-  const warningsAcknowledged = warnings.every((warning) => props.acknowledgedWarnings.has(warning));
-  const canContinue = props.purchaseEnabled && warningsAcknowledged;
+  const summary = props.summary;
+  const remedy = summary.remedy === "money_back" ? "Change-of-mind money back" : "Change-of-mind store credit";
+  const trialPermission = summary.trialPermission ? "Trial permitted" : "No Trial Permission evidenced";
+  const window = `${summary.remedyWindow.days} days from ${summary.remedyWindow.startsAt} · ${summary.remedyWindow.requiredAction.replaceAll("_", " ")}`;
+  const transport = summary.returnTransport === "doorstep_pickup" ? "Doorstep pickup" : "Self-shipping";
+  const cost = summary.buyerPaidCosts.kind === "explicit_none"
+    ? "₹0 evidenced"
+    : summary.buyerPaidCosts.kind === "known"
+      ? `₹${summary.buyerPaidCosts.amountInr.toLocaleString("en-IN")} evidenced`
+      : "No fee stated—cost uncertain";
+  const warningsAcknowledged = summary.materialWarnings.every((warning) =>
+    props.acknowledgedWarnings.has(warning.id),
+  );
+  const canAuthorize = props.purchaseEnabled && warningsAcknowledged;
   return (
     <div className="stage-card compact">
-      <p className="step-kicker">Step 5 of 7</p><h2>Approval Summary</h2><p className="stage-copy">The exact choice that a Purchase Authorization would cover.</p>
+      <p className="step-kicker">Step 5 of 7</p><h2>Approval Summary</h2><p className="stage-copy">The exact choice that your single-use Purchase Authorization will cover for 10 minutes.</p>
       <dl className="summary-list">
-        <div><dt>Product</dt><dd>{props.assessment.product.manufacturer} {props.assessment.product.model} · {props.assessment.product.condition} · {props.assessment.product.variant}</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Selection</dt><dd>{{ ranking_winner: "Remedy Ranking winner", buyer_selected_tie: "Buyer-selected Tied Offer", buyer_override: "Buyer Override" }[props.selection]}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {window}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
-        <div><dt>Evidence state</dt><dd>{props.selectedOffer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"} · Reviewed Evidence</dd></div>
+        <div><dt>Product</dt><dd>{summary.product.manufacturer} {summary.product.model} · {summary.product.condition} · {summary.product.variant} · {summary.product.bundleContents} · {summary.product.warrantyRegion} warranty region</dd></div>
+        <div><dt>Merchant / seller</dt><dd>{summary.merchant} / {summary.seller}</dd></div>
+        <div><dt>Selection</dt><dd>{{ ranking_winner: "Remedy Ranking winner", buyer_selected_tie: "Buyer-selected Tied Offer", buyer_override: "Buyer Override" }[props.selection]}</dd></div>
+        <div><dt>Quantity / destination</dt><dd>{summary.quantity} / {summary.destinationReference}</dd></div>
+        <div><dt>Confirmed Checkout Total / maximum</dt><dd>₹{summary.confirmedCheckoutTotalInr.toLocaleString("en-IN")} / ₹{summary.maximumTotalInr.toLocaleString("en-IN")}</dd></div>
+        <div><dt>Premium Limit</dt><dd>₹{summary.premiumLimitInr.toLocaleString("en-IN")}</dd></div>
+        <div><dt>Evidenced remedy</dt><dd>{remedy} · {window}</dd></div>
+        <div><dt>Trial Permission</dt><dd>{trialPermission}</dd></div>
+        <div><dt>Return transport / buyer-paid costs</dt><dd>{transport} · {cost}</dd></div>
+        <div><dt>Evidence timestamp / cache state</dt><dd>{new Date(summary.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {summary.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"} · Reviewed Evidence</dd></div>
+        <div><dt>Material Remedy Conditions</dt><dd>{summary.materialConditions.length === 0 ? "None evidenced" : summary.materialConditions.join(" ")}</dd></div>
       </dl>
-      <div className="policy-citation"><h3>Supporting Policy Evidence</h3><blockquote>“{policy.quote}”</blockquote><a href={props.selectedOffer.evidence.sourceUrl}>{props.selectedOffer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a><small>Collected {new Date(props.selectedOffer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {props.selectedOffer.evidence.scope.kind}: {props.selectedOffer.evidence.scope.value}</small></div>
-      {warnings.map((warning) => (
-        <label className="warning-check" key={warning}><input checked={props.acknowledgedWarnings.has(warning)} onChange={(event) => props.onAcknowledgementChange(warning, event.target.checked)} type="checkbox" /><span><strong>I acknowledge: {warning}</strong></span></label>
+      {summary.materialWarnings.map((warning) => (
+        <label className="warning-check" key={warning.id}><input checked={props.acknowledgedWarnings.has(warning.id)} onChange={(event) => props.onAcknowledgementChange(warning.id, event.target.checked)} type="checkbox" /><span><strong>I acknowledge: {warning.detail}</strong></span></label>
       ))}
-      {!props.purchaseEnabled && (
-        <p className="error-message" role="alert">Purchase is blocked until OpenAI extraction passes the human-reviewed official-source policy contract.</p>
-      )}
-      <button className="primary-button" disabled={!canContinue} onClick={props.onContinue} type="button">Continue to checkout <span aria-hidden="true">→</span></button>
+      {!props.purchaseEnabled && <p className="error-message" role="alert">Purchase Authorization is blocked until the human-reviewed policy contract is enabled.</p>}
+      <button className="primary-button" disabled={!canAuthorize} onClick={props.onAuthorize} type="button">Create Purchase Authorization <span aria-hidden="true">→</span></button>
     </div>
   );
 }

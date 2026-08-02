@@ -21,6 +21,7 @@ const adapters =
     ? baseAdapters
     : {
         ...baseAdapters,
+        nextAuthorizationId: () => crypto.randomUUID(),
         policyContract: { purchaseEnabled: () => POLICY_CONTRACT_RELEASE.purchaseEnabled },
         evidenceApplicability: {
           appliesToProduct: (_product: Product, snapshot: EvidenceSnapshot) =>

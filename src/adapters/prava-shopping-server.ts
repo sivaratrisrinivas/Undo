@@ -95,11 +95,17 @@ function emptyProduct(): Product {
   };
 }
 
-function unavailableQuote(offer: Offer, reason: string, product: Product = emptyProduct()): CheckoutQuote {
+function unavailableQuote(
+  offer: Offer,
+  reason: string,
+  destinationReference: string,
+  product: Product = emptyProduct(),
+): CheckoutQuote {
   return {
     offerId: offer.id,
     merchant: offer.merchant,
     seller: offer.seller,
+    destinationReference,
     product,
     itemTotalInr: 0,
     deliveryInr: 0,
@@ -156,6 +162,7 @@ function parseQuote(
   payload: unknown,
   offer: Offer,
   config: CatalogConfig,
+  destinationReference: string,
   product: Product,
 ): CheckoutQuote | undefined {
   const quote = record(payload);
@@ -199,6 +206,7 @@ function parseQuote(
     offerId: offer.id,
     merchant: offer.merchant,
     seller: offer.seller,
+    destinationReference,
     product,
     itemTotalInr,
     deliveryInr,
@@ -233,7 +241,7 @@ async function quoteOffer(
 ): Promise<CheckoutQuote> {
   const config = configFor(offer);
   if (config === undefined) {
-    return unavailableQuote(offer, "Prava returned no orderable listing for this merchant and seller");
+    return unavailableQuote(offer, "Prava returned no orderable listing for this merchant and seller", destinationReference);
   }
   try {
     const productPayload = await runJson(
@@ -243,7 +251,7 @@ async function quoteOffer(
     );
     const verified = parseVerifiedVariant(productPayload, config);
     if (verified === undefined) {
-      return unavailableQuote(offer, "Prava could not prove the exact Product identity and availability");
+      return unavailableQuote(offer, "Prava could not prove the exact Product identity and availability", destinationReference);
     }
     const quoteArgs = [
       "shop", "quote", "--variant-id", verified.variantId,
@@ -254,13 +262,13 @@ async function quoteOffer(
       quoteArgs.push("--address-id", destinationReference);
     }
     const quotePayload = await runJson(runner, quoteArgs, 50_000);
-    return parseQuote(quotePayload, offer, config, verified.product)
-      ?? unavailableQuote(offer, "Prava returned an invalid or incomplete checkout quote", verified.product);
+    return parseQuote(quotePayload, offer, config, destinationReference, verified.product)
+      ?? unavailableQuote(offer, "Prava returned an invalid or incomplete checkout quote", destinationReference, verified.product);
   } catch (cause: unknown) {
     const reason = cause instanceof SyntaxError
       ? "Prava returned an unreadable checkout response"
       : "Prava could not obtain a live checkout quote for this Offer";
-    return unavailableQuote(offer, reason);
+    return unavailableQuote(offer, reason, destinationReference);
   }
 }
 

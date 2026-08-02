@@ -39,11 +39,19 @@ describe("guided Reversibility Assessment", () => {
     await user.click(screen.getByRole("button", { name: "Review approval summary" }));
 
     expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
+    expect(screen.getByText(/Standard retail package · India warranty region/)).toBeVisible();
+    expect(screen.getByText("1 / destination-ref-prava-default")).toBeVisible();
+    expect(screen.getByText("₹14,990 / ₹14,990")).toBeVisible();
+    expect(screen.getByText(/1\/8\/2026.*Current Evidence.*Reviewed Evidence/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create Purchase Authorization" })).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: /sealed and unopened/i }));
+    expect(screen.getByRole("button", { name: "Create Purchase Authorization" })).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: /No fee stated/i }));
-    await user.click(screen.getByRole("button", { name: "Continue to checkout" }));
+    await user.click(screen.getByRole("button", { name: "Create Purchase Authorization" }));
 
     expect(screen.getByRole("heading", { name: "Checkout decision" })).toBeVisible();
+    expect(screen.getByText(/purchase-authorization-demo-1 · Active/)).toBeVisible();
+    expect(screen.getByText(/Prava one-time prepaid sandbox checkout/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Decline purchase" }));
 
     expect(screen.getByRole("heading", { name: "Undo Record" })).toBeVisible();
@@ -52,7 +60,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByText("policy-schema/1.0")).toBeVisible();
     expect(screen.getByText(/destination-ref-prava-default/)).toBeVisible();
     expect(screen.getByText("3 snapshots retained")).toBeVisible();
-    expect(screen.getByText("Not requested")).toBeVisible();
+    expect(screen.getByText("Authorized, not submitted")).toBeVisible();
     expect(screen.queryByText(/card number|cvv|full address/i)).not.toBeInTheDocument();
     expect(adapters.activity).toEqual({
       sensoRequests: 1,

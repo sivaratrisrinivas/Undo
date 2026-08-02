@@ -100,6 +100,7 @@ function quoteFor(offer: Offer, overrides: FrozenRankingOffer): CheckoutQuote {
     offerId: offer.id,
     merchant: overrides.merchant ?? offer.merchant,
     seller: overrides.seller ?? offer.seller,
+    destinationReference: "destination-ref-ranking-contract",
     product: { ...SUPPORTED_PRODUCT, ...overrides.product },
     itemTotalInr: totalInr - 500,
     deliveryInr: 300,
@@ -161,11 +162,14 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }),
     },
     prava: {
-      quoteOffers: () =>
+      quoteOffers: (_offers, destinationReference) =>
         Promise.resolve({
           _tag: "ok",
           value: SUPPORTED_OFFERS.map((offer) =>
-            quoteFor(offer, configuredOffer(scenario, offer)),
+            ({
+              ...quoteFor(offer, configuredOffer(scenario, offer)),
+              destinationReference,
+            }),
           ),
         }),
       submitCheckout: () =>
@@ -181,6 +185,7 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       saveCache: () => Promise.resolve(),
     },
     now: () => NOW,
+    nextAuthorizationId: () => "frozen-ranking-authorization",
     nextRecordId: () => "frozen-ranking-record",
   };
 }

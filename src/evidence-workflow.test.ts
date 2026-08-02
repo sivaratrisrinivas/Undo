@@ -109,7 +109,7 @@ function adapters(
       },
     },
     prava: {
-      quoteOffers: () =>
+      quoteOffers: (_offers, destinationReference) =>
         Promise.resolve({
           _tag: "ok",
           value: SUPPORTED_OFFERS.map(
@@ -117,6 +117,7 @@ function adapters(
               offerId: offer.id,
               merchant: offer.merchant,
               seller: offer.seller,
+              destinationReference,
               product: SUPPORTED_PRODUCT,
               itemTotalInr: 13_500 + index * 100,
               deliveryInr: 300,
@@ -146,6 +147,7 @@ function adapters(
       saveCache: () => Promise.resolve(),
     },
     now: () => "2026-08-02T09:00:00.000Z",
+    nextAuthorizationId: () => "evidence-authorization",
     nextRecordId: () => "evidence-record",
   };
 }
