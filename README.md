@@ -71,6 +71,14 @@ npm run typecheck
 npm run build
 ```
 
+### Live Prava verification
+
+Issue #5 was verified on 2026-08-02 with the pinned official Prava CLI 3.1.0 and a linked account
+containing a default saved destination. `npm run test:prava-live` successfully verified the exact
+Headphone Zone catalog variant, opened a destination-specific binding quote, reconciled its subtotal,
+shipping, tax, applied discount, and final INR total, and kept the unsupported Flipkart seller
+unavailable. The verification stops after quoting; it does not submit checkout or create a charge.
+
 The development server provides `/api/policy-evidence`, `/api/policy-extraction`, and
 `/api/checkout-quotes` as server-only routes. A production host must provide equivalent routes and a
 linked Prava agent identity.
