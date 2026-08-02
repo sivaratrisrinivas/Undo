@@ -23,7 +23,7 @@ describe("guided Reversibility Assessment", () => {
     await user.click(screen.getByRole("button", { name: "Compare offers" }));
 
     expect(await screen.findByRole("heading", { name: "Offer comparison" })).toBeVisible();
-    expect(screen.getByText("Headphone Zone")).toBeVisible();
+    expect(screen.getAllByText("Headphone Zone").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Inspect evidence" }));
 
     expect(screen.getByRole("heading", { name: "Policy Evidence" })).toBeVisible();
@@ -161,6 +161,37 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getAllByText("Cashback/rewards: excluded from total")).toHaveLength(3);
   });
 
+  it("shows the visible ranking rationale, premium, policy, evidence, and uncertainty", async () => {
+    const user = userEvent.setup();
+    render(<App adapters={createFakeAdapters()} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByText("The only Offer satisfying every eligibility rule")).toBeVisible();
+    expect(screen.getByText("Baseline ₹14,490 · premium ₹500")).toBeVisible();
+    expect(screen.getAllByText("7 days from delivered · request submitted").length).toBeGreaterThan(0);
+    expect(screen.getByText("Self-shipping · No fee stated—cost uncertain")).toBeVisible();
+    expect(screen.getByText("Product must remain sealed and unopened.")).toBeVisible();
+    expect(screen.getAllByText(/Collected 01\/08\/2026/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Current Evidence · Reviewed Evidence/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Eligible products may be returned for a refund/)).toBeVisible();
+  });
+
+  it("allows an eligible Buyer Override and blocks ineligible choices", async () => {
+    const user = userEvent.setup();
+    render(<App adapters={createFakeAdapters({ scenario: "override" })} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByRole("radio", { name: /Headphone Zone.*recommended/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Flipkart.*not eligible/i })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: /Concept Kart.*Buyer Override/i }));
+    expect(screen.getByText(/Buyer Override selected: Concept Kart/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeEnabled();
+  });
+
   it("shows an exact Product mismatch without allowing that Offer to rank", async () => {
     const user = userEvent.setup();
     const adapters = createFakeAdapters({
@@ -258,7 +289,7 @@ describe("guided Reversibility Assessment", () => {
 
     expect(await screen.findByText("These Offers are tied. Choose before continuing.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeDisabled();
-    await user.click(screen.getByRole("radio", { name: "Concept Kart" }));
+    await user.click(screen.getByRole("radio", { name: /Concept Kart/ }));
     expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeEnabled();
   });
 

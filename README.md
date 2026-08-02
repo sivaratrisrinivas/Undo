@@ -64,6 +64,7 @@ npm run dev                 # Senso/OpenAI-backed flow
 VITE_EVIDENCE_MODE=fake npm run dev
 npm test
 npm run test:policy-contract
+npm run test:ranking-contract
 npm run test:senso-live    # opt-in; requires .env.local
 npm run test:prava-live    # opt-in; requires linked agent + default address/phone
 npm run lint

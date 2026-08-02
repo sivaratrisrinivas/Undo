@@ -7,7 +7,7 @@ import { StageProgress } from "./components/StageProgress";
 import {
   parsePremiumLimitInr,
   resolveSupportedProduct,
-  type AssessedOffer,
+  type BuyerOfferSelection,
   type EvidenceReview,
   type EvidenceSnapshot,
   type PolicyAssessment,
@@ -42,7 +42,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
   const [premiumLimit, setPremiumLimit] = useState("2000");
   const [destinationReference, setDestinationReference] = useState("destination-ref-prava-default");
   const [assessment, setAssessment] = useState<ReversibilityAssessment>();
-  const [selectedOffer, setSelectedOffer] = useState<AssessedOffer>();
+  const [selectedOffer, setSelectedOffer] = useState<BuyerOfferSelection>();
   const [record, setRecord] = useState<UndoRecord>();
   const [reviewCandidates, setReviewCandidates] = useState<ReadonlyArray<{
     readonly snapshot: EvidenceSnapshot;
@@ -96,10 +96,23 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
       return;
     }
     setAssessment(result.value);
+    const initialSelection =
+      result.value.ranking._tag === "winner"
+        ? workflow.selectOffer(result.value, result.value.ranking.offer.offer.id)
+        : undefined;
     setSelectedOffer(
-      result.value.ranking._tag === "winner" ? result.value.ranking.offer : undefined,
+      initialSelection?._tag === "ok" ? initialSelection.value : undefined,
     );
+    setAcknowledgedWarnings(new Set());
     setStage("comparison");
+  }
+
+  function selectOffer(offerId: ReversibilityAssessment["offers"][number]["offer"]["id"]) {
+    if (assessment === undefined) return;
+    const result = workflow.selectOffer(assessment, offerId);
+    if (result._tag === "err") return;
+    setSelectedOffer(result.value);
+    setAcknowledgedWarnings(new Set());
   }
 
   async function approveEvidence() {
@@ -147,11 +160,11 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
         <section className="workspace" aria-live="polite" aria-busy={loading}>
           {stage === "product" && <ProductInputStage error={error} inputMode={inputMode} productName={productName} url={url} onInputModeChange={setInputMode} onProductNameChange={setProductName} onStart={startAssessment} onUrlChange={setUrl} />}
           {stage === "constraints" && product !== undefined && <ConstraintsStage destinationReference={destinationReference} error={error} loading={loading} premiumLimit={premiumLimit} onCompare={() => void compareOffers()} onDestinationChange={setDestinationReference} onPremiumLimitChange={setPremiumLimit} />}
-          {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOfferId={selectedOffer?.offer.id} onContinue={() => setStage("evidence")} onSelect={setSelectedOffer} />}
+          {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOffer={selectedOffer} onContinue={() => setStage("evidence")} onSelect={(offer) => selectOffer(offer.offer.id)} />}
           {stage === "review" && <EvidenceReviewStage candidates={reviewCandidates} loading={loading} onApprove={() => void approveEvidence()} />}
           {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={() => setStage("approval")} />}
-          {stage === "approval" && assessment !== undefined && selectedOffer !== undefined && <ApprovalStage assessment={assessment} selectedOffer={selectedOffer} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warning, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warning); else next.delete(warning); return next; })} onContinue={() => setStage("checkout")} />}
-          {stage === "checkout" && selectedOffer !== undefined && <CheckoutStage selectedOffer={selectedOffer} onDecline={declinePurchase} />}
+          {stage === "approval" && assessment !== undefined && selectedOffer !== undefined && <ApprovalStage assessment={assessment} selectedOffer={selectedOffer.offer} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warning, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warning); else next.delete(warning); return next; })} onContinue={() => setStage("checkout")} />}
+          {stage === "checkout" && selectedOffer !== undefined && <CheckoutStage selectedOffer={selectedOffer.offer} onDecline={declinePurchase} />}
           {stage === "record" && record !== undefined && <RecordStage record={record} />}
         </section>
       </main>

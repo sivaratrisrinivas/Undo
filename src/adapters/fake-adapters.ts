@@ -210,7 +210,7 @@ export function createFakeAdapters(options?: {
   readonly failOpenAi?: boolean;
   readonly failPravaQuote?: boolean;
   readonly unreviewed?: boolean;
-  readonly scenario?: "default" | "exchange" | "tied";
+  readonly scenario?: "default" | "exchange" | "tied" | "override";
   readonly quoteOverrides?: Partial<Record<CheckoutQuote["offerId"], Partial<CheckoutQuote>>>;
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
@@ -239,7 +239,7 @@ export function createFakeAdapters(options?: {
               }
             : policy,
         )
-      : options?.scenario === "tied"
+      : options?.scenario === "tied" || options?.scenario === "override"
         ? policies.map((policy) =>
             policy.offerId === "concept-kart"
               ? {
@@ -317,9 +317,15 @@ export function createFakeAdapters(options?: {
           });
         }
         const scenarioQuotes =
-          options?.scenario === "tied"
+          options?.scenario === "tied" || options?.scenario === "override"
             ? quotes.map((quote) =>
-                quote.offerId === "concept-kart" ? quoteFor(quote.offerId, 14_990, quote.purchaseAvailable) : quote,
+                quote.offerId === "concept-kart"
+                  ? quoteFor(
+                      quote.offerId,
+                      options.scenario === "tied" ? 14_990 : 15_000,
+                      quote.purchaseAvailable,
+                    )
+                  : quote,
               )
             : quotes;
         const overriddenQuotes = scenarioQuotes.map((quote) => ({

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:policy-contract": "vitest run src/evaluation/policy-contract.test.ts",
+    "test:ranking-contract": "vitest run src/evaluation/ranking-contract.test.ts",
     "test:senso-live": "RUN_SENSO_LIVE_TESTS=1 vitest run src/adapters/senso-evidence-live.test.ts",
     "test:prava-live": "RUN_PRAVA_LIVE_TESTS=1 vitest run src/adapters/prava-shopping-live.test.ts",
     "test:watch": "vitest",

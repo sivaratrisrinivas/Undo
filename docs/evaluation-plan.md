@@ -47,7 +47,9 @@ Human review applies once to each unique Evidence Snapshot content fingerprint, 
 
 ## Frozen ranking scenarios
 
-Before the ranking engine is implemented, a human reviewer freezes 30 structured input scenarios and their expected outcomes. The set includes:
+The 30 structured inputs and expected outcomes were frozen in
+`src/evaluation/frozen-ranking-scenarios.ts` before the issue #6 ranking changes. Run them with
+`npm run test:ranking-contract`; the release target is 30/30. The set includes:
 
 - an Offer exactly at and an Offer ₹1 above the Premium Limit;
 - Trial Permission versus unopened-only money back;

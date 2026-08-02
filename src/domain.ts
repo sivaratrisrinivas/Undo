@@ -179,18 +179,31 @@ export type AssessedOffer = {
     readonly reused: boolean;
   };
   readonly checkoutQuote: CheckoutQuote;
+  readonly premiumOverBaselineInr: number | null;
   readonly rank: number | null;
   readonly eligible: boolean;
   readonly explanation: string;
 };
+
+/** A buyer-controlled choice that has passed every purchase eligibility rule. */
+export type BuyerOfferSelection = {
+  readonly offer: AssessedOffer;
+  readonly selection: "ranking_winner" | "buyer_selected_tie" | "buyer_override";
+};
+
+/** Typed result of attempting to select an Offer from an assessment. */
+export type BuyerOfferSelectionResult =
+  | { readonly _tag: "ok"; readonly value: BuyerOfferSelection }
+  | { readonly _tag: "err"; readonly reason: "offer_not_found" | "offer_not_eligible" };
 
 /** The completed assessment data shown before a purchase decision. */
 export type ReversibilityAssessment = {
   readonly product: Product;
   readonly offers: ReadonlyArray<AssessedOffer>;
   readonly ranking:
-    | { readonly _tag: "winner"; readonly offer: AssessedOffer }
-    | { readonly _tag: "tied"; readonly offers: ReadonlyArray<AssessedOffer> };
+    | { readonly _tag: "winner"; readonly offer: AssessedOffer; readonly reason: string }
+    | { readonly _tag: "tied"; readonly offers: ReadonlyArray<AssessedOffer>; readonly reason: string };
+  readonly baselineTotalInr: number;
   readonly premiumLimitInr: number;
   readonly destinationReference: string;
 };
@@ -224,7 +237,7 @@ export type UndoRecord = {
   readonly recommendation: {
     readonly rankedOfferIds: ReadonlyArray<Offer["id"]>;
     readonly selectedOfferId: Offer["id"] | null;
-    readonly selection: "ranking_winner" | "buyer_selected_tie" | "none";
+    readonly selection: "ranking_winner" | "buyer_selected_tie" | "buyer_override" | "none";
     readonly rankingRules: "remedy-ranking/1.0";
   };
   readonly authorizationState: "not_requested";

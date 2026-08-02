@@ -1,5 +1,7 @@
 import type {
   AssessedOffer,
+  BuyerOfferSelection,
+  BuyerOfferSelectionResult,
   CheckoutQuote,
   EvidenceSnapshot,
   EvidenceReview,
@@ -107,34 +109,70 @@ function reversalCostOrder(policy: PolicyAssessment): number {
   return Number.MAX_SAFE_INTEGER;
 }
 
-function compareEligibleOffers(
+type RankingComparison = {
+  readonly order: number;
+  readonly reason: string;
+};
+
+function compareEligibleOffersByRule(
   left: { readonly policy: PolicyAssessment; readonly checkoutQuote: CheckoutQuote },
   right: { readonly policy: PolicyAssessment; readonly checkoutQuote: CheckoutQuote },
-): number {
+): RankingComparison {
   const trialDifference =
     Number(right.policy.productCondition === "trial_allowed") -
     Number(left.policy.productCondition === "trial_allowed");
-  if (trialDifference !== 0) return trialDifference;
+  if (trialDifference !== 0) {
+    return { order: trialDifference, reason: "Trial Permission ranks first" };
+  }
 
   const remedyOrder = { money_back: 2, store_credit: 1, none: 0, unclear: 0 } as const;
   const remedyDifference =
     remedyOrder[right.policy.changeOfMind] - remedyOrder[left.policy.changeOfMind];
-  if (remedyDifference !== 0) return remedyDifference;
+  if (remedyDifference !== 0) {
+    return { order: remedyDifference, reason: "Money back ranks above store credit" };
+  }
 
   const leftWindowDays = left.policy.remedyWindow.kind === "known" ? left.policy.remedyWindow.days : 0;
   const rightWindowDays = right.policy.remedyWindow.kind === "known" ? right.policy.remedyWindow.days : 0;
   const windowDifference = rightWindowDays - leftWindowDays;
-  if (windowDifference !== 0) return windowDifference;
+  if (windowDifference !== 0) {
+    return { order: windowDifference, reason: "The longer Remedy Window ranks next" };
+  }
 
   const transportOrder = { doorstep_pickup: 2, self_ship: 1, unclear: 0 } as const;
   const transportDifference =
     transportOrder[right.policy.returnTransport] - transportOrder[left.policy.returnTransport];
-  if (transportDifference !== 0) return transportDifference;
+  if (transportDifference !== 0) {
+    return { order: transportDifference, reason: "Doorstep pickup ranks above self-shipping" };
+  }
 
   const costDifference = reversalCostOrder(left.policy) - reversalCostOrder(right.policy);
-  if (costDifference !== 0) return costDifference;
+  if (costDifference !== 0) {
+    return { order: costDifference, reason: "The lower evidenced Reversal Cost ranks next" };
+  }
 
-  return left.checkoutQuote.totalInr - right.checkoutQuote.totalInr;
+  const totalDifference = left.checkoutQuote.totalInr - right.checkoutQuote.totalInr;
+  return {
+    order: totalDifference,
+    reason:
+      totalDifference === 0
+        ? "Equal after every Remedy Ranking rule"
+        : "The lower Confirmed Checkout Total is the final ranking rule",
+  };
+}
+
+function compareEligibleOffers(
+  left: { readonly policy: PolicyAssessment; readonly checkoutQuote: CheckoutQuote },
+  right: { readonly policy: PolicyAssessment; readonly checkoutQuote: CheckoutQuote },
+): number {
+  return compareEligibleOffersByRule(left, right).order;
+}
+
+function hasFreshEvidence(snapshot: EvidenceSnapshot, now: number): boolean {
+  return (
+    snapshot.retrievalState !== "stale" &&
+    now - Date.parse(snapshot.collectedAt) <= 24 * 60 * 60 * 1_000
+  );
 }
 
 function sumDiscounts(discounts: ReadonlyArray<{ readonly amountInr: number }>): number {
@@ -348,50 +386,19 @@ export class AssessmentWorkflow {
         "Policy Evidence is incomplete for one or more Offers",
       );
     }
-    const unreviewed = evidence.some(
-      (snapshot) => !this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint)),
-    );
-    if (unreviewed) {
-      return this.policyBlock(
-        product,
-        premiumLimitInr,
-        safeDestinationReference,
-        evidence,
-        "Policy Evidence changed and requires human review",
-        usingCache
-          ? undefined
-          : evidence.flatMap((snapshot) => {
-              if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
-              const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
-              return policy === undefined ? [] : [{ snapshot, policy }];
-            }),
-      );
-    }
-
     const now = Date.parse(this.adapters.now());
-    const hasStaleEvidence = evidence.some(
-      (snapshot) => now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000,
+    evidence = evidence.map((snapshot) =>
+      hasFreshEvidence(snapshot, now)
+        ? snapshot
+        : { ...snapshot, retrievalState: "stale" as const },
     );
-    if (hasStaleEvidence) {
-      const staleEvidence = evidence.map((snapshot) =>
-        now - Date.parse(snapshot.collectedAt) > 24 * 60 * 60 * 1_000
-          ? { ...snapshot, retrievalState: "stale" as const }
-          : snapshot,
-      );
-      return this.policyBlock(
-        product,
-        premiumLimitInr,
-        safeDestinationReference,
-        staleEvidence,
-        "Stale Evidence must be refreshed before purchase",
-      );
-    }
-
-    const reviewedPolicies = evidence.flatMap((snapshot) => {
+    const applicablePolicies = evidence.flatMap((snapshot) => {
       const review = reviews.get(snapshot.fingerprint);
-      return review === undefined ? [] : [review.policy];
+      if (this.isApplicableReview(snapshot, review)) return [review.policy];
+      const extractedPolicy = policies.find((policy) => policy.offerId === snapshot.offerId);
+      return extractedPolicy === undefined ? [] : [extractedPolicy];
     });
-    if (reviewedPolicies.length !== evidence.length) {
+    if (applicablePolicies.length !== evidence.length) {
       return this.policyBlock(
         product,
         premiumLimitInr,
@@ -400,16 +407,15 @@ export class AssessmentWorkflow {
         "Policy Evidence changed and requires human review",
       );
     }
-    policies = reviewedPolicies;
+    policies = applicablePolicies;
     if (!usingCache) {
       const completeReviews = evidence.flatMap((snapshot) => {
         const review = reviews.get(snapshot.fingerprint);
-        return review === undefined ? [] : [review];
+        return this.isApplicableReview(snapshot, review) ? [review] : [];
       });
-      await this.adapters.evidence.saveCache({
-        snapshots: evidence,
-        reviews: completeReviews,
-      });
+      if (completeReviews.length === evidence.length) {
+        await this.adapters.evidence.saveCache({ snapshots: evidence, reviews: completeReviews });
+      }
     }
 
     const unrankedOffers = SUPPORTED_OFFERS.map((offer) => {
@@ -430,6 +436,11 @@ export class AssessmentWorkflow {
         checkoutQuote.purchaseAvailable && !quoteHasValidBreakdown
           ? unavailableQuote(checkoutQuote, "Prava returned an inconsistent checkout total")
           : checkoutQuote;
+      const evidenceReviewed = this.isApplicableReview(
+        snapshot,
+        reviews.get(snapshot.fingerprint),
+      );
+      const evidenceFresh = hasFreshEvidence(snapshot, now);
 
       return {
         offer,
@@ -438,12 +449,14 @@ export class AssessmentWorkflow {
         policy,
         evidence: snapshot,
         evidenceReview: {
-          state: reviews.get(snapshot.fingerprint) === undefined ? "unreviewed" : "reviewed",
-          reused: reviews.get(snapshot.fingerprint) !== undefined,
+          state: evidenceReviewed ? "reviewed" : "unreviewed",
+          reused: evidenceReviewed,
         },
         checkoutQuote: normalizedQuote,
+        premiumOverBaselineInr: null,
         rank: null,
         eligible: false,
+        evidenceEligible: evidenceReviewed && evidenceFresh,
         explanation: !offerEquivalent
           ? !productEquivalence.equivalent
             ? `Not equivalent: ${formatProductMismatches(productEquivalence)}`
@@ -454,6 +467,10 @@ export class AssessmentWorkflow {
             ? normalizedQuote.unavailableReason ?? "Purchase Unavailable"
             : !quoteHasValidBreakdown
               ? "Purchase Unavailable: Prava returned an inconsistent checkout total"
+              : !evidenceReviewed
+                ? "Blocked: Policy Evidence requires human review"
+                : !evidenceFresh
+                  ? "Blocked: Stale Evidence must be refreshed"
               : !isPolicyEligible(policy)
                 ? policy.changeOfMind === "none"
                   ? "Not reversible: defect remedy only"
@@ -491,15 +508,20 @@ export class AssessmentWorkflow {
       const withinPremiumLimit = offer.checkoutQuote.totalInr <= baselineTotal + premiumLimitInr;
       return {
         ...offer,
+        premiumOverBaselineInr:
+          offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable
+            ? offer.checkoutQuote.totalInr - baselineTotal
+            : null,
         eligible:
           offer.offerEquivalent &&
           offer.checkoutQuote.purchaseAvailable &&
+          offer.evidenceEligible &&
           isPolicyEligible(offer.policy) &&
           withinPremiumLimit,
         explanation:
           !offer.offerEquivalent || !offer.checkoutQuote.purchaseAvailable
             ? offer.explanation
-            : !isPolicyEligible(offer.policy)
+            : !offer.evidenceEligible || !isPolicyEligible(offer.policy)
               ? offer.explanation
               : !withinPremiumLimit
                 ? "Outside the Premium Limit"
@@ -510,18 +532,27 @@ export class AssessmentWorkflow {
     const rankedOffers = assessedBeforeRanking.filter((offer) => offer.eligible).sort(compareEligibleOffers);
     const firstRankedOffer = rankedOffers[0];
     if (firstRankedOffer === undefined) {
-      const hasReversibleOffer = assessedBeforeRanking.some(
-        (offer) => offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable && isPolicyEligible(offer.policy),
+      const purchaseCandidatesBeforePremium = assessedBeforeRanking.filter(
+        (offer) =>
+          offer.offerEquivalent &&
+          offer.checkoutQuote.purchaseAvailable &&
+          offer.evidenceEligible &&
+          isPolicyEligible(offer.policy),
       );
-      const message = hasReversibleOffer
+      const message = purchaseCandidatesBeforePremium.length > 0
         ? "No reversible Offer is within this Premium Limit"
         : "No reversible purchase found";
-      const reason: "blocked_by_price" | "blocked_by_policy" = hasReversibleOffer
+      const reason: "blocked_by_price" | "blocked_by_policy" = purchaseCandidatesBeforePremium.length > 0
         ? "blocked_by_price"
         : "blocked_by_policy";
-      const rankedOfferIds = assessedBeforeRanking
-        .filter((offer) => offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable && isPolicyEligible(offer.policy))
-        .map((offer) => offer.offer.id);
+      const rankedOfferIds = purchaseCandidatesBeforePremium.map((offer) => offer.offer.id);
+      const reviewCandidates = usingCache
+        ? undefined
+        : evidence.flatMap((snapshot) => {
+            if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
+            const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
+            return policy === undefined ? [] : [{ snapshot, policy }];
+          });
       return {
         _tag: "err",
         error: {
@@ -537,6 +568,9 @@ export class AssessmentWorkflow {
             reason,
             rankedOfferIds,
           ),
+          ...(reviewCandidates === undefined || reviewCandidates.length === 0
+            ? {}
+            : { reviewCandidates }),
         },
       };
     }
@@ -553,7 +587,7 @@ export class AssessmentWorkflow {
       }
       rankByOfferId.set(offer.offer.id, currentRank);
     }
-    const assessedOffers = assessedBeforeRanking.map((offer) => ({
+    const assessedOffers: ReadonlyArray<AssessedOffer> = assessedBeforeRanking.map((offer) => ({
       ...offer,
       rank: rankByOfferId.get(offer.offer.id) ?? null,
       explanation:
@@ -572,8 +606,19 @@ export class AssessmentWorkflow {
     }
     const ranking =
       topOffers.length > 1
-        ? ({ _tag: "tied", offers: topOffers } as const)
-        : ({ _tag: "winner", offer: firstTopOffer } as const);
+        ? ({
+            _tag: "tied",
+            offers: topOffers,
+            reason: "Equal after every Remedy Ranking rule",
+          } as const)
+        : ({
+            _tag: "winner",
+            offer: firstTopOffer,
+            reason:
+              rankedOffers[1] === undefined
+                ? "The only Offer satisfying every eligibility rule"
+                : compareEligibleOffersByRule(firstRankedOffer, rankedOffers[1]).reason,
+          } as const);
 
     return {
       _tag: "ok",
@@ -581,22 +626,42 @@ export class AssessmentWorkflow {
         product,
         offers: assessedOffers,
         ranking,
+        baselineTotalInr: baselineTotal,
         premiumLimitInr,
         destinationReference: safeDestinationReference,
       },
     };
   }
 
+  /** Selects a winner, Tied Offer, or safe Buyer Override without bypassing eligibility. */
+  selectOffer(
+    assessment: ReversibilityAssessment,
+    offerId: Offer["id"],
+  ): BuyerOfferSelectionResult {
+    const offer = assessment.offers.find((candidate) => candidate.offer.id === offerId);
+    if (offer === undefined) return { _tag: "err", reason: "offer_not_found" };
+    if (!offer.eligible) return { _tag: "err", reason: "offer_not_eligible" };
+
+    const selection: BuyerOfferSelection["selection"] =
+      assessment.ranking._tag === "winner" && assessment.ranking.offer.offer.id === offerId
+        ? "ranking_winner"
+        : assessment.ranking._tag === "tied" &&
+            assessment.ranking.offers.some((candidate) => candidate.offer.id === offerId)
+          ? "buyer_selected_tie"
+          : "buyer_override";
+    return { _tag: "ok", value: { offer, selection } };
+  }
+
   /** Records a buyer decision without submitting checkout. */
-  decline(assessment: ReversibilityAssessment, selectedOffer: AssessedOffer): UndoRecord {
+  decline(assessment: ReversibilityAssessment, selectedOffer: BuyerOfferSelection): UndoRecord {
     return {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
       outcome: "buyer_declined",
       product: assessment.product,
-      selectedMerchant: selectedOffer.offer.merchant,
-      selectedSeller: selectedOffer.offer.seller,
-      confirmedCheckoutTotalInr: selectedOffer.checkoutQuote.totalInr,
+      selectedMerchant: selectedOffer.offer.offer.merchant,
+      selectedSeller: selectedOffer.offer.offer.seller,
+      confirmedCheckoutTotalInr: selectedOffer.offer.checkoutQuote.totalInr,
       premiumLimitInr: assessment.premiumLimitInr,
       destinationReference: assessment.destinationReference,
       evidence: assessment.offers.map((offer) => offer.evidence),
@@ -605,9 +670,8 @@ export class AssessmentWorkflow {
           assessment.ranking._tag === "winner"
             ? [assessment.ranking.offer.offer.id]
             : assessment.ranking.offers.map((offer) => offer.offer.id),
-        selectedOfferId: selectedOffer.offer.id,
-        selection:
-          assessment.ranking._tag === "winner" ? "ranking_winner" : "buyer_selected_tie",
+        selectedOfferId: selectedOffer.offer.offer.id,
+        selection: selectedOffer.selection,
         rankingRules: "remedy-ranking/1.0",
       },
       authorizationState: "not_requested",
