@@ -24,7 +24,7 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
   {
     offerId: "headphone-zone",
     merchant: "Headphone Zone",
-    sourceUrl: "https://www.headphonezone.in/pages/returns-refunds",
+    sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
     scope: { kind: "product", value: "Sennheiser HD 560S" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:
@@ -36,7 +36,7 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
   {
     offerId: "concept-kart",
     merchant: "Concept Kart",
-    sourceUrl: "https://conceptkart.com/pages/refund-policy",
+    sourceUrl: "https://conceptkart.com/pages/replacement-return-policy",
     scope: { kind: "category", value: "Headphones" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:

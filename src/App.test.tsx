@@ -33,7 +33,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getAllByText("product: Sennheiser HD 560S").length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", {
-        name: /https:\/\/www\.headphonezone\.in\/pages\/returns-refunds/,
+        name: /https:\/\/www\.headphonezone\.in\/pages\/help-center-returns-exchanges/,
       }).length,
     ).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Review approval summary" }));

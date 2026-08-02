@@ -10,6 +10,7 @@ export type SensoOfficialSource = {
 
 type SensoSearchResult = {
   readonly content_id: string;
+  readonly chunk_index: number;
   readonly chunk_text: string;
 };
 
@@ -24,7 +25,13 @@ function searchResults(value: unknown): ReadonlyArray<SensoSearchResult> {
   return results.filter((result): result is SensoSearchResult => {
     if (typeof result !== "object" || result === null) return false;
     const candidate = result as Record<string, unknown>;
-    return typeof candidate.content_id === "string" && typeof candidate.chunk_text === "string";
+    return (
+      typeof candidate.content_id === "string" &&
+      typeof candidate.chunk_index === "number" &&
+      Number.isSafeInteger(candidate.chunk_index) &&
+      candidate.chunk_index >= 0 &&
+      typeof candidate.chunk_text === "string"
+    );
   });
 }
 
@@ -44,18 +51,23 @@ export async function retrievePolicyEvidenceFromSenso(
   const collectedAt = (options.now ?? (() => new Date().toISOString()))();
   const documents = await Promise.all(
     options.sources.map(async (source) => {
-      const response = await fetcher("https://apiv2.senso.ai/api/v1/org/search", {
+      if (source.contentIds.length === 0) {
+        throw new Error(`Senso content IDs are not configured for ${source.merchant}`);
+      }
+      const response = await fetcher("https://apiv2.senso.ai/api/v1/org/search/context", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-Key": options.apiKey },
         body: JSON.stringify({
           query: `Return, refund, exchange, replacement, condition, window, transport, and fee terms for ${source.merchant} Sennheiser HD 560S`,
-          max_results: 50,
+          max_results: 20,
+          content_ids: source.contentIds,
+          require_scoped_ids: true,
         }),
       });
       if (!response.ok) throw new Error(`Senso search returned ${response.status}`);
       const results = searchResults(await response.json()).filter((result) =>
         source.contentIds.includes(result.content_id),
-      );
+      ).sort((left, right) => left.chunk_index - right.chunk_index);
       return {
         offerId: source.offerId,
         merchant: source.merchant,

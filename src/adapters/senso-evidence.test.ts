@@ -17,7 +17,7 @@ describe("Senso Policy Evidence adapter", () => {
               {
                 offerId: "headphone-zone",
                 merchant: "Headphone Zone",
-                sourceUrl: "https://www.headphonezone.in/pages/returns-refunds",
+                sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
                 scope: { kind: "product", value: "Sennheiser HD 560S" },
                 collectedAt: "2026-08-02T08:00:00.000Z",
                 exactText: "Official return wording.",
