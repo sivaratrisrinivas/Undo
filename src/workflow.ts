@@ -169,9 +169,11 @@ function compareEligibleOffers(
 }
 
 function hasFreshEvidence(snapshot: EvidenceSnapshot, now: number): boolean {
+  const ageInMilliseconds = now - Date.parse(snapshot.collectedAt);
   return (
     snapshot.retrievalState !== "stale" &&
-    now - Date.parse(snapshot.collectedAt) <= 24 * 60 * 60 * 1_000
+    ageInMilliseconds >= 0 &&
+    ageInMilliseconds <= 24 * 60 * 60 * 1_000
   );
 }
 
@@ -386,12 +388,38 @@ export class AssessmentWorkflow {
         "Policy Evidence is incomplete for one or more Offers",
       );
     }
+    const reviewCandidates = usingCache
+      ? []
+      : evidence.flatMap((snapshot) => {
+          if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
+          const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
+          return policy === undefined ? [] : [{ snapshot, policy }];
+        });
+    if (reviewCandidates.length > 0) {
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        safeDestinationReference,
+        evidence,
+        "Policy Evidence changed and requires human review",
+        reviewCandidates,
+      );
+    }
     const now = Date.parse(this.adapters.now());
     evidence = evidence.map((snapshot) =>
       hasFreshEvidence(snapshot, now)
         ? snapshot
         : { ...snapshot, retrievalState: "stale" as const },
     );
+    if (evidence.every((snapshot) => snapshot.retrievalState === "stale")) {
+      return this.policyBlock(
+        product,
+        premiumLimitInr,
+        safeDestinationReference,
+        evidence,
+        "Stale Evidence must be refreshed before purchase",
+      );
+    }
     const applicablePolicies = evidence.flatMap((snapshot) => {
       const review = reviews.get(snapshot.fingerprint);
       if (this.isApplicableReview(snapshot, review)) return [review.policy];
@@ -546,7 +574,7 @@ export class AssessmentWorkflow {
         ? "blocked_by_price"
         : "blocked_by_policy";
       const rankedOfferIds = purchaseCandidatesBeforePremium.map((offer) => offer.offer.id);
-      const reviewCandidates = usingCache
+      const pendingReviewCandidates = usingCache
         ? undefined
         : evidence.flatMap((snapshot) => {
             if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
@@ -568,9 +596,9 @@ export class AssessmentWorkflow {
             reason,
             rankedOfferIds,
           ),
-          ...(reviewCandidates === undefined || reviewCandidates.length === 0
+          ...(pendingReviewCandidates === undefined || pendingReviewCandidates.length === 0
             ? {}
-            : { reviewCandidates }),
+            : { reviewCandidates: pendingReviewCandidates }),
         },
       };
     }
@@ -719,6 +747,7 @@ export class AssessmentWorkflow {
   ): review is EvidenceReview {
     return (
       review !== undefined &&
+      review.fingerprint === snapshot.fingerprint &&
       review.policy.offerId === snapshot.offerId &&
       this.hasCompleteCitations(snapshot, review.policy)
     );

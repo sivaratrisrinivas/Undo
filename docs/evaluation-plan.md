@@ -51,6 +51,11 @@ The 30 structured inputs and expected outcomes were frozen in
 `src/evaluation/frozen-ranking-scenarios.ts` before the issue #6 ranking changes. Run them with
 `npm run test:ranking-contract`; the release target is 30/30. The set includes:
 
+The scenario catalog and initial expected outcomes were committed first. The code-review pass later
+strengthened the missing/conflicting evidence payloads; the missing-evidence outcome was corrected to
+the established human-review blocking state because its original fixture had not actually omitted
+evidence. No implementation disagreement was used to revise a valid frozen expectation.
+
 - an Offer exactly at and an Offer ₹1 above the Premium Limit;
 - Trial Permission versus unopened-only money back;
 - fresh, Stale, Cached, missing, and conflicting evidence;

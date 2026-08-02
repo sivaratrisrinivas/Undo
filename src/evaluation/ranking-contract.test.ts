@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   OFFICIAL_EVIDENCE_SOURCES,
+  POLICY_FACTS,
   parsePremiumLimitInr,
   SUPPORTED_OFFERS,
   SUPPORTED_PRODUCT,
@@ -31,11 +32,33 @@ function configuredOffer(
 function policyFor(offer: Offer, overrides: FrozenRankingOffer): PolicyAssessment {
   const source = OFFICIAL_EVIDENCE_SOURCES.find((candidate) => candidate.offerId === offer.id);
   if (source === undefined) throw new Error(`Missing source fixture for ${offer.id}`);
+  const ordinaryCitations: PolicyAssessment["citations"] = POLICY_FACTS.map((fact) => ({
+    fact,
+    quote: EVIDENCE_TEXT,
+    sourceUrl: source.sourceUrl,
+  }));
+  const citations =
+    overrides.evidenceProblem === "missing_required_citation"
+      ? ordinaryCitations.filter((citation) => citation.fact !== "product_condition")
+      : overrides.evidenceProblem === "conflicting_required_evidence"
+        ? ordinaryCitations.flatMap((citation) =>
+            citation.fact === "product_condition"
+              ? [
+                  { ...citation, quote: "Policy says the Product must remain sealed." },
+                  { ...citation, quote: "Policy says ordinary trials are allowed." },
+                ]
+              : [citation],
+          )
+        : ordinaryCitations;
+  const evidenceDerivedProductCondition =
+    overrides.evidenceProblem === "conflicting_required_evidence"
+      ? "unclear" as const
+      : "opened_unused" as const;
   return {
     offerId: offer.id,
     changeOfMind: offer.id === "flipkart" ? "none" : "money_back",
     defect: "none",
-    productCondition: "opened_unused",
+    productCondition: evidenceDerivedProductCondition,
     remedyWindow: {
       kind: "known",
       days: 7,
@@ -47,13 +70,7 @@ function policyFor(offer: Offer, overrides: FrozenRankingOffer): PolicyAssessmen
     materialConditions: [],
     supplementaryRemedies: [],
     quote: EVIDENCE_TEXT,
-    citations: ["remedy", "window", "product_condition", "return_transport", "buyer_paid_fees"].map(
-      (fact) => ({
-        fact: fact as PolicyAssessment["citations"][number]["fact"],
-        quote: EVIDENCE_TEXT,
-        sourceUrl: source.sourceUrl,
-      }),
-    ),
+    citations,
     ...overrides.policy,
   };
 }
@@ -67,7 +84,10 @@ function snapshotFor(offer: Offer, overrides: FrozenRankingOffer): EvidenceSnaps
     sourceUrl: source.sourceUrl,
     scope: source.scope,
     collectedAt: overrides.collectedAt ?? "2026-08-01T11:00:00.000Z",
-    exactText: EVIDENCE_TEXT,
+    exactText:
+      overrides.evidenceProblem === "conflicting_required_evidence"
+        ? `${EVIDENCE_TEXT} Policy says the Product must remain sealed. Policy says ordinary trials are allowed.`
+        : EVIDENCE_TEXT,
     fingerprint: `sha256:frozen-${offer.id}`,
     retrievedVia: "senso",
     retrievalState: overrides.retrievalState ?? "current",
@@ -107,7 +127,14 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       if (offer === undefined || policy === undefined) return [];
       return configuredOffer(scenario, offer).reviewed === false
         ? []
-        : [[snapshot.fingerprint, { fingerprint: snapshot.fingerprint, approvedAt: NOW, policy }]];
+        : [[
+            snapshot.fingerprint,
+            {
+              fingerprint: configuredOffer(scenario, offer).reviewFingerprint ?? snapshot.fingerprint,
+              approvedAt: NOW,
+              policy,
+            },
+          ]];
     }),
   );
   const cache = { snapshots, reviews: [...reviews.values()] };
@@ -206,5 +233,38 @@ describe("frozen Remedy Ranking contract", () => {
       const actual = selection._tag === "ok" ? selection.value.selection : selection.reason;
       expect(actual).toBe(scenario.buyerSelection.expected);
     }
+  });
+
+  it.each([
+    {
+      name: "future-dated evidence is not fresh",
+      offer: { collectedAt: "2026-08-01T12:00:00.001Z" },
+      expected: "winner" as const,
+    },
+    {
+      name: "a review for a different fingerprint is not Reviewed Evidence",
+      offer: { reviewFingerprint: "sha256:different-content" },
+      expected: "blocked" as const,
+    },
+  ])("rejects $name", async ({ offer, expected }) => {
+    const scenario: FrozenRankingScenario = {
+      name: "safety regression",
+      offers: { "headphone-zone": offer },
+      expected: { _tag: "winner", offerId: "concept-kart" },
+    };
+    const result = await new AssessmentWorkflow(adaptersFor(scenario)).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit(2_000),
+      "destination-ref-safety-regression",
+    );
+
+    expect(result).toMatchObject(
+      expected === "winner"
+        ? {
+            _tag: "ok",
+            value: { ranking: { _tag: "winner", offer: { offer: { id: "concept-kart" } } } },
+          }
+        : { _tag: "err", error: { reason: "blocked_by_policy" } },
+    );
   });
 });

@@ -12,6 +12,7 @@ type PolicyOverrides = Partial<
   >
 >;
 
+/** One Offer's controlled differences from the frozen ranking fixture defaults. */
 export type FrozenRankingOffer = {
   readonly totalInr?: number;
   readonly purchaseAvailable?: boolean;
@@ -22,8 +23,11 @@ export type FrozenRankingOffer = {
   readonly collectedAt?: string;
   readonly retrievalState?: "current" | "cached" | "stale";
   readonly reviewed?: boolean;
+  readonly reviewFingerprint?: string;
+  readonly evidenceProblem?: "missing_required_citation" | "conflicting_required_evidence";
 };
 
+/** One immutable ranking input and its independently authored expected outcome. */
 export type FrozenRankingScenario = {
   readonly name: string;
   readonly premiumLimitInr?: number;
@@ -262,12 +266,20 @@ export const FROZEN_RANKING_SCENARIOS: ReadonlyArray<FrozenRankingScenario> = [
   },
   {
     name: "Missing required evidence excludes the Policy Unclear Offer",
-    offers: { "headphone-zone": { policy: { productCondition: "unclear" } } },
-    expected: { _tag: "winner", offerId: "concept-kart" },
+    offers: {
+      "headphone-zone": {
+        evidenceProblem: "missing_required_citation",
+      },
+    },
+    expected: { _tag: "blocked", reason: "blocked_by_policy" },
   },
   {
     name: "Conflicting required evidence excludes the Policy Unclear Offer",
-    offers: { "headphone-zone": { policy: { changeOfMind: "unclear" } } },
+    offers: {
+      "headphone-zone": {
+        evidenceProblem: "conflicting_required_evidence",
+      },
+    },
     expected: { _tag: "winner", offerId: "concept-kart" },
   },
   {

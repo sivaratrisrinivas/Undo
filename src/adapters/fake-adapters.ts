@@ -213,6 +213,10 @@ export function createFakeAdapters(options?: {
   readonly scenario?: "default" | "exchange" | "tied" | "override";
   readonly quoteOverrides?: Partial<Record<CheckoutQuote["offerId"], Partial<CheckoutQuote>>>;
 }): FakeAdapters {
+  const scenario = options?.scenario ?? "default";
+  const conceptKartIsReversible = scenario === "tied" || scenario === "override";
+  const conceptKartComparisonTotal =
+    scenario === "tied" ? 14_990 : scenario === "override" ? 15_000 : undefined;
   const activity: FakeAdapterActivity = {
     sensoRequests: 0,
     openAiRequests: 0,
@@ -220,7 +224,7 @@ export function createFakeAdapters(options?: {
     pravaCheckoutRequests: 0,
   };
   const scenarioPolicies = () =>
-    options?.scenario === "exchange"
+    scenario === "exchange"
       ? policies.map((policy) =>
           policy.offerId === "headphone-zone"
             ? {
@@ -239,7 +243,7 @@ export function createFakeAdapters(options?: {
               }
             : policy,
         )
-      : options?.scenario === "tied" || options?.scenario === "override"
+      : conceptKartIsReversible
         ? policies.map((policy) =>
             policy.offerId === "concept-kart"
               ? {
@@ -317,12 +321,12 @@ export function createFakeAdapters(options?: {
           });
         }
         const scenarioQuotes =
-          options?.scenario === "tied" || options?.scenario === "override"
+          conceptKartComparisonTotal !== undefined
             ? quotes.map((quote) =>
                 quote.offerId === "concept-kart"
                   ? quoteFor(
                       quote.offerId,
-                      options.scenario === "tied" ? 14_990 : 15_000,
+                      conceptKartComparisonTotal,
                       quote.purchaseAvailable,
                     )
                   : quote,

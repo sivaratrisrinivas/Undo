@@ -1,5 +1,14 @@
 import type { AssessedOffer, BuyerOfferSelection, EvidenceSnapshot, PolicyAssessment, ReversibilityAssessment } from "../domain";
 import { EvidenceCard } from "./EvidenceCard";
+import {
+  formatChangeOfMind,
+  formatEvidenceState,
+  formatPolicyFact,
+  formatProductCondition,
+  formatRemedyWindow,
+  formatReturnTransport,
+  formatReversalCost,
+} from "./policy-presentation";
 
 /** Renders the deterministic Remedy Ranking comparison. */
 export function ComparisonStage(props: {
@@ -24,15 +33,11 @@ export function ComparisonStage(props: {
       <div className="offer-table" aria-label="Equivalent Offer comparison">
         {props.assessment.offers.map((offer) => {
           const policy = offer.policy;
-          const window = policy.remedyWindow.kind === "known"
-            ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt} · ${policy.remedyWindow.requiredAction.replaceAll("_", " ")}`
-            : "Policy Unclear";
-          const transport = { doorstep_pickup: "Doorstep pickup", self_ship: "Self-shipping", unclear: "Policy Unclear" }[policy.returnTransport];
-          const cost = policy.reversalCost.kind === "known"
-            ? `₹${policy.reversalCost.amountInr.toLocaleString("en-IN")}`
-            : { explicit_none: "₹0 evidenced", unstated: "No fee stated—cost uncertain", unpriced_required: "Unpriced Required Cost", unclear: "Policy Unclear" }[policy.reversalCost.kind];
-          const condition = { unopened_only: "Sealed and unopened only", opened_unused: "Opened but unused", trial_allowed: "Trial Permission", unclear: "Policy Unclear" }[policy.productCondition];
-          const evidenceState = { current: "Current Evidence", cached: "Cached Evidence", stale: "Stale Evidence" }[offer.evidence.retrievalState];
+          const window = formatRemedyWindow(policy);
+          const transport = formatReturnTransport(policy);
+          const cost = formatReversalCost(policy);
+          const condition = formatProductCondition(policy);
+          const evidenceState = formatEvidenceState(offer.evidence);
           const collected = new Date(offer.evidence.collectedAt).toLocaleString("en-IN", {
             timeZone: "Asia/Kolkata",
             day: "2-digit",
@@ -53,11 +58,27 @@ export function ComparisonStage(props: {
               {offer.checkoutQuote.advertisedDiscounts.length > 0 && <small>Advertised only: excluded from total</small>}
               {(offer.checkoutQuote.cashbackInr > 0 || offer.checkoutQuote.rewardPoints > 0) && <small>Cashback/rewards: excluded from total</small>}
             </div>
-            <div><span className="cell-label">Change of mind</span><strong>{{ money_back: "Money back", store_credit: "Store credit", none: "None evidenced", unclear: "Policy Unclear" }[policy.changeOfMind]}</strong><small>{condition}</small><small>{window}</small></div>
+            <div><span className="cell-label">Change of mind</span><strong>{formatChangeOfMind(policy)}</strong><small>{condition}</small><small>{window}</small></div>
             <div><span className="cell-label">Transport / Reversal Cost</span><strong>{transport} · {cost}</strong></div>
             <div><span className="cell-label">Evidence</span><strong>{evidenceState} · {offer.evidenceReview.state === "reviewed" ? "Reviewed Evidence" : "Review required"}</strong><small>Collected {collected}</small></div>
             <div><span className="cell-label">Assessment</span><strong>{offer.explanation}</strong></div>
-            <div className="offer-policy"><span className="cell-label">Exact Policy Evidence</span><blockquote>“{policy.quote}”</blockquote><a href={offer.evidence.sourceUrl}>{offer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a>{policy.materialConditions.length > 0 && <ul>{policy.materialConditions.map((item) => <li key={item.detail}>{item.detail}</li>)}</ul>}</div>
+            <div className="offer-policy">
+              <span className="cell-label">Exact Policy Evidence</span>
+              {policy.citations.map((citation, index) => (
+                <div className="comparison-citation" key={`${citation.fact}:${index}`}>
+                  <strong>{citation.fact.replaceAll("_", " ")}: {formatPolicyFact(policy, citation.fact)}</strong>
+                  <blockquote>“{citation.quote}”</blockquote>
+                  <a href={citation.sourceUrl}>{citation.sourceUrl} <span aria-hidden="true">↗</span></a>
+                </div>
+              ))}
+              {policy.materialConditions.map((item) => (
+                <div className="comparison-citation" key={item.detail}>
+                  <strong>Remedy Condition: {item.detail}</strong>
+                  <blockquote>“{item.citation.quote}”</blockquote>
+                  <a href={item.citation.sourceUrl}>{item.citation.sourceUrl} <span aria-hidden="true">↗</span></a>
+                </div>
+              ))}
+            </div>
           </article>
         );})}
       </div>
@@ -132,12 +153,10 @@ export function ApprovalStage(props: {
 }) {
   const policy = props.selectedOffer.policy;
   const remedy = policy.changeOfMind === "money_back" ? "Change-of-mind money back" : "Change-of-mind store credit";
-  const condition = policy.productCondition === "trial_allowed" ? "Trial permitted" : policy.productCondition === "opened_unused" ? "Opened but unused" : "Sealed and unopened only";
-  const transport = policy.returnTransport === "doorstep_pickup" ? "Doorstep pickup" : "Self-ship";
-  const cost = policy.reversalCost.kind === "explicit_none" ? "₹0 evidenced" : policy.reversalCost.kind === "known" ? `₹${policy.reversalCost.amountInr.toLocaleString("en-IN")}` : "No fee stated—cost uncertain";
-  const window = policy.remedyWindow.kind === "known"
-    ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}`
-    : "Policy Unclear";
+  const condition = policy.productCondition === "trial_allowed" ? "Trial permitted" : formatProductCondition(policy);
+  const transport = formatReturnTransport(policy);
+  const cost = formatReversalCost(policy);
+  const window = formatRemedyWindow(policy);
   const warnings = [
     ...policy.materialConditions.map((condition) => condition.detail),
     ...(policy.reversalCost.kind === "unstated" ? ["No fee stated—cost uncertain."] : []),

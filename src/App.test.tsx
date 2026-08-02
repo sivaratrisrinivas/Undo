@@ -172,10 +172,10 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByText("Baseline ₹14,490 · premium ₹500")).toBeVisible();
     expect(screen.getAllByText("7 days from delivered · request submitted").length).toBeGreaterThan(0);
     expect(screen.getByText("Self-shipping · No fee stated—cost uncertain")).toBeVisible();
-    expect(screen.getByText("Product must remain sealed and unopened.")).toBeVisible();
+    expect(screen.getByText(/Product must remain sealed and unopened\./)).toBeVisible();
     expect(screen.getAllByText(/Collected 01\/08\/2026/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Current Evidence · Reviewed Evidence/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Eligible products may be returned for a refund/)).toBeVisible();
+    expect(screen.getAllByText(/Eligible products may be returned for a refund/).length).toBeGreaterThan(0);
   });
 
   it("allows an eligible Buyer Override and blocks ineligible choices", async () => {
@@ -304,7 +304,7 @@ describe("guided Reversibility Assessment", () => {
     await user.click(await screen.findByRole("button", { name: "Inspect evidence" }));
     await user.click(screen.getByRole("button", { name: "Review approval summary" }));
 
-    expect(screen.getByText(/Change-of-mind store credit · 10 days/)).toBeVisible();
+    expect(screen.getByText(/Change-of-mind store credit · 10 days from delivered · request submitted/)).toBeVisible();
     expect(screen.getByText("Trial permitted")).toBeVisible();
     expect(screen.getByText("Doorstep pickup · ₹0 evidenced")).toBeVisible();
   });

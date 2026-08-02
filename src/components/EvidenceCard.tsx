@@ -1,49 +1,8 @@
 import type { EvidenceSnapshot, PolicyAssessment } from "../domain";
-
-function policyFacts(policy: PolicyAssessment) {
-  const changeOfMind = {
-    money_back: "Change-of-Mind Return",
-    store_credit: "Change-of-Mind Exchange",
-    none: "No change-of-mind remedy",
-    unclear: "Change-of-mind remedy unclear",
-  }[policy.changeOfMind];
-  const defect = {
-    replacement: "Replacement",
-    money_back: "Defect refund",
-    none: "No defect remedy",
-    unclear: "Defect remedy unclear",
-  }[policy.defect];
-  const condition = {
-    unopened_only: "Sealed and unopened",
-    opened_unused: "Opened but unused",
-    trial_allowed: "Trial Permission",
-    unclear: "Policy Unclear",
-  }[policy.productCondition];
-  const transport = {
-    doorstep_pickup: "Doorstep pickup",
-    self_ship: "Self-shipping",
-    unclear: "Policy Unclear",
-  }[policy.returnTransport];
-  const cost =
-    policy.reversalCost.kind === "known"
-      ? `₹${policy.reversalCost.amountInr} Reversal Cost`
-      : {
-          explicit_none: "Explicit ₹0 Reversal Cost",
-          unstated: "Unstated Cost",
-          unpriced_required: "Unpriced Required Cost",
-          unclear: "Policy Unclear",
-        }[policy.reversalCost.kind];
-  return {
-    remedy: `${changeOfMind}; defect remedy: ${defect}`,
-    window:
-      policy.remedyWindow.kind === "known"
-        ? `${policy.remedyWindow.days} days from ${policy.remedyWindow.startsAt}; ${policy.remedyWindow.requiredAction.replaceAll("_", " ")}`
-        : "Policy Unclear",
-    product_condition: condition,
-    return_transport: transport,
-    buyer_paid_fees: cost,
-  } as const;
-}
+import {
+  formatEvidenceState,
+  formatPolicyFact,
+} from "./policy-presentation";
 
 /** Shows the exact wording and provenance of one Evidence Snapshot. */
 export function EvidenceCard(props: {
@@ -53,11 +12,7 @@ export function EvidenceCard(props: {
 }) {
   const snapshot = props.snapshot;
   const policy = props.policy;
-  const stateLabel = {
-    current: "Current Evidence",
-    cached: "Cached Evidence",
-    stale: "Stale Evidence",
-  }[snapshot.retrievalState];
+  const stateLabel = formatEvidenceState(snapshot);
   return (
     <article className="evidence-card">
       <div className="evidence-header">
@@ -77,7 +32,7 @@ export function EvidenceCard(props: {
           <h4>Extracted facts and citations</h4>
           {policy.citations.map((citation, index) => (
             <div className="evidence-fact" key={`${citation.fact}:${index}`}>
-              <strong>{citation.fact.replaceAll("_", " ")}: {policyFacts(policy)[citation.fact]}</strong>
+              <strong>{citation.fact.replaceAll("_", " ")}: {formatPolicyFact(policy, citation.fact)}</strong>
               <blockquote>“{citation.quote}”</blockquote>
               <a href={citation.sourceUrl}>{citation.sourceUrl} <span aria-hidden="true">↗</span></a>
               <small>{snapshot.scope.kind}: {snapshot.scope.value} · {new Date(snapshot.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {stateLabel}</small>
