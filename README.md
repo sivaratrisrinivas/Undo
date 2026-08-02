@@ -1,8 +1,13 @@
 # Undo
 
 Undo compares equivalent product Offers by the evidenced cost and uncertainty of reversing a purchase.
-The current MVP supports a new black Sennheiser HD 560S in the standard retail package with an Indian
+The current MVP supports a new Sennheiser HD 560S with the Black variant, standard retail package, and Indian
 warranty, across Headphone Zone, Concept Kart, and Flipkart seller BUZZINDIA.
+
+Before ranking, the Prava quote boundary proves each Offer's Product identity and seller. It retains the
+live item total, delivery, taxes, applied discounts, advertised-but-unapplied discounts, cashback, rewards,
+availability, and Confirmed Checkout Total. Only equivalent Purchase Available totals can set the Premium
+Limit baseline; advertised value, cashback, and rewards never reduce it.
 
 Undo retrieves official Policy Evidence through Senso, extracts the five policy fields through the
 server-only OpenAI Responses API, validates exact citations, and applies deterministic eligibility and

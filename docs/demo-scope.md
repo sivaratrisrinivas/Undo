@@ -5,8 +5,8 @@
 - Manufacturer: Sennheiser
 - Model: HD 560S
 - Condition: New
-- Colour: Black
-- Bundle: Standard retail package
+- Variant: Black
+- Bundle contents: Standard retail package
 - Warranty region: India
 
 Undo compares an Offer only after deterministic checks prove it matches this Product.

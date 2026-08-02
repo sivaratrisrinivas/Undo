@@ -4,7 +4,7 @@ Undo uses one guided flow rather than a chatbot:
 
 1. The buyer selects the preset Sennheiser HD 560S or pastes one of its three approved Offer URLs.
 2. The buyer chooses the Delivery Destination and Premium Limit.
-3. Undo verifies Product equivalence and compares the three Offers.
+3. Undo verifies manufacturer, model, variant, condition, bundle contents, warranty region, merchant, and seller before comparing the three Offers.
 4. The buyer can inspect the exact Policy Evidence and collection time behind every policy fact.
 5. The buyer approves the chosen merchant, seller, Product, quantity, destination, and maximum Confirmed Checkout Total.
 6. Undo submits one checkout attempt through Prava.

@@ -7,11 +7,17 @@ import type {
   PolicyAssessment,
   PremiumLimitInr,
   Product,
+  ProductEquivalence,
   ReversibilityAssessment,
   ReviewedEvidenceCache,
   UndoRecord,
 } from "./domain";
-import { OFFICIAL_EVIDENCE_SOURCES, POLICY_FACTS, SUPPORTED_OFFERS } from "./domain";
+import {
+  compareProductIdentity,
+  OFFICIAL_EVIDENCE_SOURCES,
+  POLICY_FACTS,
+  SUPPORTED_OFFERS,
+} from "./domain";
 
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
@@ -131,6 +137,82 @@ function compareEligibleOffers(
   return left.checkoutQuote.totalInr - right.checkoutQuote.totalInr;
 }
 
+function sumDiscounts(discounts: ReadonlyArray<{ readonly amountInr: number }>): number {
+  return discounts.reduce((total, discount) => total + discount.amountInr, 0);
+}
+
+function hasValidQuoteBreakdown(quote: CheckoutQuote): boolean {
+  const values = [
+    quote.itemTotalInr,
+    quote.deliveryInr,
+    quote.taxesInr,
+    quote.cashbackInr,
+    quote.rewardPoints,
+    quote.totalInr,
+    ...quote.appliedDiscounts.map((discount) => discount.amountInr),
+    ...quote.advertisedDiscounts.map((discount) => discount.amountInr),
+  ];
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) return false;
+  const expectedTotal =
+    quote.itemTotalInr +
+    quote.deliveryInr +
+    quote.taxesInr -
+    sumDiscounts(quote.appliedDiscounts);
+  return expectedTotal === quote.totalInr;
+}
+
+function opaqueDestinationReference(input: string): string {
+  const trimmed = input.trim();
+  if (/destination-ref-[a-z0-9-]+$/i.test(trimmed)) return trimmed;
+  let hash = 2_166_136_261;
+  for (const character of trimmed) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `destination-ref-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function missingQuoteFor(offer: Offer): CheckoutQuote {
+  return {
+    offerId: offer.id,
+    merchant: offer.merchant,
+    seller: offer.seller,
+    product: {
+      manufacturer: "",
+      model: "",
+      variant: "",
+      condition: "",
+      bundleContents: "",
+      warrantyRegion: "",
+    },
+    itemTotalInr: 0,
+    deliveryInr: 0,
+    taxesInr: 0,
+    appliedDiscounts: [],
+    advertisedDiscounts: [],
+    cashbackInr: 0,
+    rewardPoints: 0,
+    totalInr: 0,
+    purchaseAvailable: false,
+    unavailableReason: "Prava returned no quote for this Offer",
+  };
+}
+
+function unavailableQuote(quote: CheckoutQuote, reason: string): CheckoutQuote {
+  return quote.purchaseAvailable
+    ? { ...quote, purchaseAvailable: false, unavailableReason: reason }
+    : quote;
+}
+
+function formatProductMismatches(equivalence: ProductEquivalence): string {
+  return equivalence.mismatches
+    .map(
+      (mismatch) =>
+        `${mismatch.field}: expected ${mismatch.expected}, received ${mismatch.actual ?? "unknown"}`,
+    )
+    .join("; ");
+}
+
 /** Coordinates the high-level assessment while keeping external behavior injectable. */
 export class AssessmentWorkflow {
   constructor(private readonly adapters: AssessmentAdapters) {}
@@ -161,9 +243,10 @@ export class AssessmentWorkflow {
     premiumLimitInr: PremiumLimitInr,
     destinationReference: string,
   ): Promise<AssessmentResult> {
+    const safeDestinationReference = opaqueDestinationReference(destinationReference);
     const [evidenceResult, quotesResult] = await Promise.all([
       this.adapters.senso.retrieveEvidence(product),
-      this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, destinationReference),
+      this.adapters.prava.quoteOffers(SUPPORTED_OFFERS, safeDestinationReference),
     ]);
     if (quotesResult._tag === "err") {
       return {
@@ -187,7 +270,7 @@ export class AssessmentWorkflow {
         return this.policyBlock(
           product,
           premiumLimitInr,
-          destinationReference,
+          safeDestinationReference,
           [],
           "Policy check unavailable: Senso retrieval failed and no valid cache exists",
         );
@@ -204,7 +287,7 @@ export class AssessmentWorkflow {
         return this.policyBlock(
           product,
           premiumLimitInr,
-          destinationReference,
+          safeDestinationReference,
           evidence,
           "Policy Evidence is incomplete for one or more Offers",
         );
@@ -235,7 +318,7 @@ export class AssessmentWorkflow {
           return this.policyBlock(
             product,
             premiumLimitInr,
-            destinationReference,
+            safeDestinationReference,
             evidence,
             "Policy check unavailable: OpenAI extraction failed and no valid Reviewed Evidence cache exists",
           );
@@ -260,7 +343,7 @@ export class AssessmentWorkflow {
       return this.policyBlock(
         product,
         premiumLimitInr,
-        destinationReference,
+        safeDestinationReference,
         evidence,
         "Policy Evidence is incomplete for one or more Offers",
       );
@@ -272,14 +355,14 @@ export class AssessmentWorkflow {
       return this.policyBlock(
         product,
         premiumLimitInr,
-        destinationReference,
+        safeDestinationReference,
         evidence,
         "Policy Evidence changed and requires human review",
         usingCache
-            ? undefined
-            : evidence.flatMap((snapshot) => {
-                if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
-                const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
+          ? undefined
+          : evidence.flatMap((snapshot) => {
+              if (this.isApplicableReview(snapshot, reviews.get(snapshot.fingerprint))) return [];
+              const policy = policies.find((candidate) => candidate.offerId === snapshot.offerId);
               return policy === undefined ? [] : [{ snapshot, policy }];
             }),
       );
@@ -298,7 +381,7 @@ export class AssessmentWorkflow {
       return this.policyBlock(
         product,
         premiumLimitInr,
-        destinationReference,
+        safeDestinationReference,
         staleEvidence,
         "Stale Evidence must be refreshed before purchase",
       );
@@ -312,7 +395,7 @@ export class AssessmentWorkflow {
       return this.policyBlock(
         product,
         premiumLimitInr,
-        destinationReference,
+        safeDestinationReference,
         evidence,
         "Policy Evidence changed and requires human review",
       );
@@ -329,68 +412,131 @@ export class AssessmentWorkflow {
       });
     }
 
-    const availableTotals = quotes
-      .filter((quote) => quote.purchaseAvailable)
-      .map((quote) => quote.totalInr);
-    const baselineTotal = Math.min(...availableTotals);
-    if (!Number.isFinite(baselineTotal)) {
-      return {
-        _tag: "err",
-        error: {
-          _tag: "NoEligibleOffer",
-          message: "No Purchase Available Offer found",
-          reason: "purchase_unavailable",
-        },
-      };
-    }
-
     const unrankedOffers = SUPPORTED_OFFERS.map((offer) => {
       const policy = policies.find((candidate) => candidate.offerId === offer.id);
       const snapshot = evidence.find((candidate) => candidate.offerId === offer.id);
-      const checkoutQuote = quotes.find((candidate) => candidate.offerId === offer.id);
-      if (policy === undefined || snapshot === undefined || checkoutQuote === undefined) {
-        throw new Error(`Fake adapter fixture is incomplete for ${offer.id}`);
+      const returnedQuote = quotes.find((candidate) => candidate.offerId === offer.id);
+      if (policy === undefined || snapshot === undefined) {
+        throw new Error(`Adapter result is incomplete for ${offer.id}`);
       }
 
-      const withinPremiumLimit = checkoutQuote.totalInr <= baselineTotal + premiumLimitInr;
-      const eligible =
-        checkoutQuote.purchaseAvailable && isPolicyEligible(policy) && withinPremiumLimit;
-      const explanation = !checkoutQuote.purchaseAvailable
-        ? "Purchase Unavailable"
-        : !isPolicyEligible(policy)
-          ? policy.changeOfMind === "none"
-            ? "Not reversible: defect remedy only"
-            : "Blocked by incomplete policy evidence"
-          : !withinPremiumLimit
-            ? "Outside the Premium Limit"
-            : "Eligible Reversible Offer";
+      const checkoutQuote = returnedQuote ?? missingQuoteFor(offer);
+      const productEquivalence = compareProductIdentity(product, checkoutQuote.product);
+      const merchantMatches = checkoutQuote.merchant === offer.merchant;
+      const sellerMatches = checkoutQuote.seller === offer.seller;
+      const offerEquivalent = productEquivalence.equivalent && merchantMatches && sellerMatches;
+      const quoteHasValidBreakdown = hasValidQuoteBreakdown(checkoutQuote);
+      const normalizedQuote =
+        checkoutQuote.purchaseAvailable && !quoteHasValidBreakdown
+          ? unavailableQuote(checkoutQuote, "Prava returned an inconsistent checkout total")
+          : checkoutQuote;
+
       return {
         offer,
+        productEquivalence,
+        offerEquivalent,
         policy,
         evidence: snapshot,
         evidenceReview: {
           state: reviews.get(snapshot.fingerprint) === undefined ? "unreviewed" : "reviewed",
           reused: reviews.get(snapshot.fingerprint) !== undefined,
         },
-        checkoutQuote,
+        checkoutQuote: normalizedQuote,
         rank: null,
-        eligible,
-        explanation,
+        eligible: false,
+        explanation: !offerEquivalent
+          ? !productEquivalence.equivalent
+            ? `Not equivalent: ${formatProductMismatches(productEquivalence)}`
+            : !merchantMatches
+              ? `Merchant changed: expected ${offer.merchant}, received ${checkoutQuote.merchant}`
+              : `Seller changed: expected ${offer.seller}, received ${checkoutQuote.seller}`
+          : !normalizedQuote.purchaseAvailable
+            ? normalizedQuote.unavailableReason ?? "Purchase Unavailable"
+            : !quoteHasValidBreakdown
+              ? "Purchase Unavailable: Prava returned an inconsistent checkout total"
+              : !isPolicyEligible(policy)
+                ? policy.changeOfMind === "none"
+                  ? "Not reversible: defect remedy only"
+                  : "Blocked by incomplete policy evidence"
+                : "Eligible Reversible Offer",
       } as const;
     });
 
-    const rankedOffers = unrankedOffers.filter((offer) => offer.eligible).sort(compareEligibleOffers);
-    const firstRankedOffer = rankedOffers[0];
-    if (firstRankedOffer === undefined) {
-      const hasReversibleOffer = unrankedOffers.some((offer) => isPolicyEligible(offer.policy));
+    const baselineTotal = Math.min(
+      ...unrankedOffers
+        .filter((offer) => offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable)
+        .map((offer) => offer.checkoutQuote.totalInr),
+    );
+    if (!Number.isFinite(baselineTotal)) {
+      const message = "No Purchase Available Equivalent Offer found";
       return {
         _tag: "err",
         error: {
           _tag: "NoEligibleOffer",
-          message: hasReversibleOffer
-            ? "No reversible Offer is within this Premium Limit"
-            : "No reversible purchase found",
-          reason: hasReversibleOffer ? "blocked_by_price" : "blocked_by_policy",
+          message,
+          reason: "purchase_unavailable",
+          record: this.blockedRecord(
+            product,
+            premiumLimitInr,
+            safeDestinationReference,
+            evidence,
+            message,
+            "purchase_unavailable",
+          ),
+        },
+      };
+    }
+
+    const assessedBeforeRanking = unrankedOffers.map((offer) => {
+      const withinPremiumLimit = offer.checkoutQuote.totalInr <= baselineTotal + premiumLimitInr;
+      return {
+        ...offer,
+        eligible:
+          offer.offerEquivalent &&
+          offer.checkoutQuote.purchaseAvailable &&
+          isPolicyEligible(offer.policy) &&
+          withinPremiumLimit,
+        explanation:
+          !offer.offerEquivalent || !offer.checkoutQuote.purchaseAvailable
+            ? offer.explanation
+            : !isPolicyEligible(offer.policy)
+              ? offer.explanation
+              : !withinPremiumLimit
+                ? "Outside the Premium Limit"
+                : offer.explanation,
+      };
+    });
+
+    const rankedOffers = assessedBeforeRanking.filter((offer) => offer.eligible).sort(compareEligibleOffers);
+    const firstRankedOffer = rankedOffers[0];
+    if (firstRankedOffer === undefined) {
+      const hasReversibleOffer = assessedBeforeRanking.some(
+        (offer) => offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable && isPolicyEligible(offer.policy),
+      );
+      const message = hasReversibleOffer
+        ? "No reversible Offer is within this Premium Limit"
+        : "No reversible purchase found";
+      const reason: "blocked_by_price" | "blocked_by_policy" = hasReversibleOffer
+        ? "blocked_by_price"
+        : "blocked_by_policy";
+      const rankedOfferIds = assessedBeforeRanking
+        .filter((offer) => offer.offerEquivalent && offer.checkoutQuote.purchaseAvailable && isPolicyEligible(offer.policy))
+        .map((offer) => offer.offer.id);
+      return {
+        _tag: "err",
+        error: {
+          _tag: "NoEligibleOffer",
+          message,
+          reason,
+          record: this.blockedRecord(
+            product,
+            premiumLimitInr,
+            safeDestinationReference,
+            evidence,
+            message,
+            reason,
+            rankedOfferIds,
+          ),
         },
       };
     }
@@ -407,7 +553,7 @@ export class AssessmentWorkflow {
       }
       rankByOfferId.set(offer.offer.id, currentRank);
     }
-    const assessedOffers = unrankedOffers.map((offer) => ({
+    const assessedOffers = assessedBeforeRanking.map((offer) => ({
       ...offer,
       rank: rankByOfferId.get(offer.offer.id) ?? null,
       explanation:
@@ -436,7 +582,7 @@ export class AssessmentWorkflow {
         offers: assessedOffers,
         ranking,
         premiumLimitInr,
-        destinationReference,
+        destinationReference: safeDestinationReference,
       },
     };
   }
@@ -466,7 +612,7 @@ export class AssessmentWorkflow {
       },
       authorizationState: "not_requested",
       assumptions: [
-        "All three curated Offers identify the same new Sennheiser HD 560S Product.",
+        "Each curated Offer was checked against the supported Product identity before any Purchase Authorization.",
         "Fixture evidence and quotes are deterministic demo substitutes, not live merchant data.",
         "No checkout was submitted because the buyer declined.",
       ],
@@ -591,11 +737,13 @@ export class AssessmentWorkflow {
     destinationReference: string,
     evidence: ReadonlyArray<EvidenceSnapshot>,
     blockingReason: string,
+    outcome: Exclude<UndoRecord["outcome"], "buyer_declined"> = "blocked_by_policy",
+    rankedOfferIds: ReadonlyArray<Offer["id"]> = [],
   ): UndoRecord {
     return {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
-      outcome: "blocked_by_policy",
+      outcome,
       product,
       selectedMerchant: null,
       selectedSeller: null,
@@ -604,7 +752,7 @@ export class AssessmentWorkflow {
       destinationReference,
       evidence,
       recommendation: {
-        rankedOfferIds: [],
+        rankedOfferIds,
         selectedOfferId: null,
         selection: "none",
         rankingRules: "remedy-ranking/1.0",
@@ -612,8 +760,12 @@ export class AssessmentWorkflow {
       authorizationState: "not_requested",
       blockingReason,
       assumptions: [
-        "All three curated Offers identify the same new Sennheiser HD 560S Product.",
-        "No Purchase Authorization was created because Policy Evidence was blocked.",
+        "Any Offer must pass the supported Product identity check before Purchase Authorization.",
+        outcome === "purchase_unavailable"
+          ? "No Purchase Authorization was created because no Equivalent Offer was Purchase Available."
+          : outcome === "blocked_by_price"
+            ? "No Purchase Authorization was created because every eligible Equivalent Offer exceeded the Premium Limit."
+            : "No Purchase Authorization was created because Policy Evidence was blocked.",
       ],
       versions: {
         policySchema: "policy-schema/1.0",

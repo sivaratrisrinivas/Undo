@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { App } from "./App";
 import { createFakeAdapters } from "./adapters/fake-adapters";
-import { SUPPORTED_OFFERS } from "./domain";
+import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "./domain";
 
 describe("guided Reversibility Assessment", () => {
   it("lets a buyer assess the supported Product, decline checkout, and receive an Undo Record", async () => {
@@ -145,6 +145,36 @@ describe("guided Reversibility Assessment", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Policy check unavailable");
     expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
+  });
+
+  it("shows the live quote breakdown and excludes advertised value from the total", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters();
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByText(/Item ₹14,490 · Delivery ₹300 · Taxes ₹200/)).toBeVisible();
+    expect(screen.getAllByText("Advertised only: excluded from total")).toHaveLength(3);
+    expect(screen.getAllByText("Cashback/rewards: excluded from total")).toHaveLength(3);
+  });
+
+  it("shows an exact Product mismatch without allowing that Offer to rank", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({
+      quoteOverrides: {
+        "concept-kart": { product: { ...SUPPORTED_PRODUCT, manufacturer: "Different manufacturer" } },
+      },
+    });
+
+    render(<App adapters={adapters} />);
+
+    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+
+    expect(await screen.findByText(/Not equivalent: manufacturer: expected Sennheiser/)).toBeVisible();
   });
 
   it("records the failed OpenAI extraction step instead of using model memory", async () => {

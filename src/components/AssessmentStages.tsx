@@ -11,12 +11,19 @@ export function ComparisonStage(props: {
   return (
     <div className="stage-card wide">
       <p className="step-kicker">Step 3 of 7</p><h2>Offer comparison</h2>
-      <p className="stage-copy">Equivalent Product identity confirmed. Ranking follows explicit remedy rules—not an AI score.</p>
+      <p className="stage-copy">Only exact Product and seller matches can rank. Prava totals include delivery, taxes, and discounts applied at checkout.</p>
       <div className="offer-table" aria-label="Equivalent Offer comparison">
         {props.assessment.offers.map((offer) => (
           <article className={offer.eligible ? "offer-row winner" : "offer-row"} key={offer.offer.id}>
             <div><span className="merchant">{offer.offer.merchant}</span><small>Seller: {offer.offer.seller}</small></div>
-            <div><span className="cell-label">Confirmed total</span><strong>₹{offer.checkoutQuote.totalInr.toLocaleString("en-IN")}</strong></div>
+            <div>
+              <span className="cell-label">Confirmed total</span>
+              <strong>₹{offer.checkoutQuote.totalInr.toLocaleString("en-IN")}</strong>
+              <small>Item ₹{offer.checkoutQuote.itemTotalInr.toLocaleString("en-IN")} · Delivery ₹{offer.checkoutQuote.deliveryInr.toLocaleString("en-IN")} · Taxes ₹{offer.checkoutQuote.taxesInr.toLocaleString("en-IN")}</small>
+              {offer.checkoutQuote.appliedDiscounts.length > 0 && <small>Applied: {offer.checkoutQuote.appliedDiscounts.map((discount) => `${discount.label} ₹${discount.amountInr.toLocaleString("en-IN")}`).join(", ")}</small>}
+              {offer.checkoutQuote.advertisedDiscounts.length > 0 && <small>Advertised only: excluded from total</small>}
+              {(offer.checkoutQuote.cashbackInr > 0 || offer.checkoutQuote.rewardPoints > 0) && <small>Cashback/rewards: excluded from total</small>}
+            </div>
             <div><span className="cell-label">Change of mind</span><strong>{{ money_back: "Money back", store_credit: "Store credit", none: "None evidenced", unclear: "Policy Unclear" }[offer.policy.changeOfMind]}</strong></div>
             <div><span className="cell-label">Assessment</span><strong>{offer.explanation}</strong></div>
           </article>
@@ -105,7 +112,7 @@ export function ApprovalStage(props: {
     <div className="stage-card compact">
       <p className="step-kicker">Step 5 of 7</p><h2>Approval Summary</h2><p className="stage-copy">The exact choice that a Purchase Authorization would cover.</p>
       <dl className="summary-list">
-        <div><dt>Product</dt><dd>Sennheiser HD 560S · New · Black</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {window}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
+        <div><dt>Product</dt><dd>{props.assessment.product.manufacturer} {props.assessment.product.model} · {props.assessment.product.condition} · {props.assessment.product.variant}</dd></div><div><dt>Merchant / seller</dt><dd>{props.selectedOffer.offer.merchant} / {props.selectedOffer.offer.seller}</dd></div><div><dt>Quantity / destination</dt><dd>1 / {props.assessment.destinationReference}</dd></div><div><dt>Confirmed Checkout Total</dt><dd>₹{props.selectedOffer.checkoutQuote.totalInr.toLocaleString("en-IN")}</dd></div><div><dt>Premium Limit</dt><dd>₹{props.assessment.premiumLimitInr.toLocaleString("en-IN")}</dd></div><div><dt>Evidenced remedy</dt><dd>{remedy} · {window}</dd></div><div><dt>Trial Permission</dt><dd>{condition}</dd></div><div><dt>Transport / fees</dt><dd>{transport} · {cost}</dd></div>
         <div><dt>Evidence state</dt><dd>{props.selectedOffer.evidence.retrievalState === "cached" ? "Cached Evidence" : "Current Evidence"} · Reviewed Evidence</dd></div>
       </dl>
       <div className="policy-citation"><h3>Supporting Policy Evidence</h3><blockquote>“{policy.quote}”</blockquote><a href={props.selectedOffer.evidence.sourceUrl}>{props.selectedOffer.evidence.sourceUrl} <span aria-hidden="true">↗</span></a><small>Collected {new Date(props.selectedOffer.evidence.collectedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} · {props.selectedOffer.evidence.scope.kind}: {props.selectedOffer.evidence.scope.value}</small></div>

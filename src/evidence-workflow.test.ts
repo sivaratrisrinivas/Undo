@@ -115,6 +115,16 @@ function adapters(
           value: SUPPORTED_OFFERS.map(
             (offer, index): CheckoutQuote => ({
               offerId: offer.id,
+              merchant: offer.merchant,
+              seller: offer.seller,
+              product: SUPPORTED_PRODUCT,
+              itemTotalInr: 13_500 + index * 100,
+              deliveryInr: 300,
+              taxesInr: 200,
+              appliedDiscounts: [],
+              advertisedDiscounts: [],
+              cashbackInr: 0,
+              rewardPoints: 0,
               totalInr: 14_000 + index * 100,
               purchaseAvailable: true,
             }),

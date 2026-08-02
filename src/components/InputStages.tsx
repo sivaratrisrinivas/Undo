@@ -21,7 +21,7 @@ export function ProductInputStage(props: {
         <legend className="sr-only">Product input method</legend>
         <label className={props.inputMode === "preset" ? "choice selected" : "choice"}>
           <input aria-label="Sennheiser HD 560S" checked={props.inputMode === "preset"} name="input-mode" onChange={() => props.onInputModeChange("preset")} type="radio" />
-          <span><strong>Sennheiser HD 560S</strong><small>New · Black · India warranty region</small></span>
+          <span><strong>Sennheiser HD 560S</strong><small>New · Black variant · India warranty region</small></span>
           <span className="supported">Supported</span>
         </label>
         <label className={props.inputMode === "url" ? "choice selected" : "choice"}>

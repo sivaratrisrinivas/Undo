@@ -4,7 +4,7 @@ import type {
   PolicyAssessment,
   ReviewedEvidenceCache,
 } from "../domain";
-import { POLICY_FACTS } from "../domain";
+import { POLICY_FACTS, SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "../domain";
 import type { AssessmentAdapters } from "../workflow";
 
 /** Observable counters exposed by the deterministic fake boundary. */
@@ -172,10 +172,34 @@ const policies: ReadonlyArray<PolicyAssessment> = [
   },
 ];
 
+function quoteFor(
+  offerId: CheckoutQuote["offerId"],
+  totalInr: number,
+  purchaseAvailable: boolean,
+): CheckoutQuote {
+  const offer = SUPPORTED_OFFERS.find((candidate) => candidate.id === offerId);
+  if (offer === undefined) throw new Error(`Fake quote fixture is missing ${offerId}`);
+  return {
+    offerId,
+    merchant: offer.merchant,
+    seller: offer.seller,
+    product: SUPPORTED_PRODUCT,
+    itemTotalInr: totalInr - 500,
+    deliveryInr: 300,
+    taxesInr: 200,
+    appliedDiscounts: [],
+    advertisedDiscounts: [{ label: "Advertised bank offer", amountInr: 1_000 }],
+    cashbackInr: 250,
+    rewardPoints: 100,
+    totalInr,
+    purchaseAvailable,
+  };
+}
+
 const quotes: ReadonlyArray<CheckoutQuote> = [
-  { offerId: "headphone-zone", totalInr: 14_990, purchaseAvailable: true },
-  { offerId: "concept-kart", totalInr: 14_490, purchaseAvailable: true },
-  { offerId: "flipkart", totalInr: 14_799, purchaseAvailable: false },
+  quoteFor("headphone-zone", 14_990, true),
+  quoteFor("concept-kart", 14_490, true),
+  quoteFor("flipkart", 14_799, false),
 ];
 
 /** Creates deterministic Senso, OpenAI, and Prava substitutes for the walking skeleton. */
@@ -187,6 +211,7 @@ export function createFakeAdapters(options?: {
   readonly failPravaQuote?: boolean;
   readonly unreviewed?: boolean;
   readonly scenario?: "default" | "exchange" | "tied";
+  readonly quoteOverrides?: Partial<Record<CheckoutQuote["offerId"], Partial<CheckoutQuote>>>;
 }): FakeAdapters {
   const activity: FakeAdapterActivity = {
     sensoRequests: 0,
@@ -294,10 +319,14 @@ export function createFakeAdapters(options?: {
         const scenarioQuotes =
           options?.scenario === "tied"
             ? quotes.map((quote) =>
-                quote.offerId === "concept-kart" ? { ...quote, totalInr: 14_990 } : quote,
+                quote.offerId === "concept-kart" ? quoteFor(quote.offerId, 14_990, quote.purchaseAvailable) : quote,
               )
             : quotes;
-        return Promise.resolve({ _tag: "ok" as const, value: scenarioQuotes });
+        const overriddenQuotes = scenarioQuotes.map((quote) => ({
+          ...quote,
+          ...options?.quoteOverrides?.[quote.offerId],
+        }));
+        return Promise.resolve({ _tag: "ok" as const, value: overriddenQuotes });
       },
       submitCheckout() {
         activity.pravaCheckoutRequests += 1;

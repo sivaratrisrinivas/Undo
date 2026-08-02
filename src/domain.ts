@@ -1,12 +1,49 @@
+/** The identity fields that must match before two Offers can be compared. */
+export const PRODUCT_IDENTITY_FIELDS = [
+  "manufacturer",
+  "model",
+  "variant",
+  "condition",
+  "bundleContents",
+  "warrantyRegion",
+] as const;
+
+export type ProductIdentityField = (typeof PRODUCT_IDENTITY_FIELDS)[number];
+
+/** A deterministic explanation for one Product identity mismatch. */
+export type ProductMismatch = {
+  readonly field: ProductIdentityField;
+  readonly expected: string;
+  readonly actual: string | undefined;
+};
+
+/** The result of comparing a quoted Offer Product with the buyer's Product. */
+export type ProductEquivalence = {
+  readonly equivalent: boolean;
+  readonly mismatches: ReadonlyArray<ProductMismatch>;
+};
+
 /** The only Product supported by the walking skeleton. */
 export type Product = {
-  readonly manufacturer: "Sennheiser";
-  readonly model: "HD 560S";
-  readonly condition: "New";
-  readonly colour: "Black";
-  readonly bundle: "Standard retail package";
-  readonly warrantyRegion: "India";
+  readonly manufacturer: string;
+  readonly model: string;
+  readonly variant: string;
+  readonly condition: string;
+  readonly bundleContents: string;
+  readonly warrantyRegion: string;
 };
+
+/** Compares every Product identity field in a stable, user-explainable order. */
+export function compareProductIdentity(expected: Product, actual: Product | undefined): ProductEquivalence {
+  const mismatches = PRODUCT_IDENTITY_FIELDS.flatMap((field) => {
+    const expectedValue = expected[field];
+    const actualValue = actual?.[field];
+    return actualValue === expectedValue
+      ? []
+      : [{ field, expected: expectedValue, actual: actualValue }];
+  });
+  return { equivalent: mismatches.length === 0, mismatches };
+}
 
 /** A supported merchant Offer for the Product. */
 export type Offer = {
@@ -106,16 +143,35 @@ export type ReviewedEvidenceCache = {
   readonly reviews: ReadonlyArray<EvidenceReview>;
 };
 
-/** A Prava live-quote substitute used by this walking skeleton. */
+/** A discount that Prava actually applied or merely advertised. */
+export type QuoteDiscount = {
+  readonly label: string;
+  readonly amountInr: number;
+};
+
+/** A Prava live quote containing the identity and complete checkout price breakdown. */
 export type CheckoutQuote = {
   readonly offerId: Offer["id"];
+  readonly merchant: string;
+  readonly seller: string;
+  readonly product: Product;
+  readonly itemTotalInr: number;
+  readonly deliveryInr: number;
+  readonly taxesInr: number;
+  readonly appliedDiscounts: ReadonlyArray<QuoteDiscount>;
+  readonly advertisedDiscounts: ReadonlyArray<QuoteDiscount>;
+  readonly cashbackInr: number;
+  readonly rewardPoints: number;
   readonly totalInr: number;
   readonly purchaseAvailable: boolean;
+  readonly unavailableReason?: string;
 };
 
 /** One ranked row shown in the Reversibility Assessment. */
 export type AssessedOffer = {
   readonly offer: Offer;
+  readonly productEquivalence: ProductEquivalence;
+  readonly offerEquivalent: boolean;
   readonly policy: PolicyAssessment;
   readonly evidence: EvidenceSnapshot;
   readonly evidenceReview: {
@@ -186,9 +242,9 @@ export type UndoRecord = {
 export const SUPPORTED_PRODUCT: Product = {
   manufacturer: "Sennheiser",
   model: "HD 560S",
+  variant: "Black",
   condition: "New",
-  colour: "Black",
-  bundle: "Standard retail package",
+  bundleContents: "Standard retail package",
   warrantyRegion: "India",
 };
 

@@ -23,9 +23,9 @@ function parseProduct(value: unknown): Product {
   if (
     product.manufacturer !== SUPPORTED_PRODUCT.manufacturer ||
     product.model !== SUPPORTED_PRODUCT.model ||
+    product.variant !== SUPPORTED_PRODUCT.variant ||
     product.condition !== SUPPORTED_PRODUCT.condition ||
-    product.colour !== SUPPORTED_PRODUCT.colour ||
-    product.bundle !== SUPPORTED_PRODUCT.bundle ||
+    product.bundleContents !== SUPPORTED_PRODUCT.bundleContents ||
     product.warrantyRegion !== SUPPORTED_PRODUCT.warrantyRegion
   ) {
     throw new Error("Unsupported Product");

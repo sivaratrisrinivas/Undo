@@ -104,10 +104,30 @@ function premiumLimit(value: string) {
 }
 
 const baseQuotes: ReadonlyArray<CheckoutQuote> = [
-  { offerId: "headphone-zone", totalInr: 10_000, purchaseAvailable: true },
-  { offerId: "concept-kart", totalInr: 10_000, purchaseAvailable: true },
-  { offerId: "flipkart", totalInr: 10_000, purchaseAvailable: false },
+  quoteFor("headphone-zone", 10_000, true),
+  quoteFor("concept-kart", 10_000, true),
+  quoteFor("flipkart", 10_000, false),
 ];
+
+function quoteFor(offerId: Offer["id"], totalInr: number, purchaseAvailable: boolean): CheckoutQuote {
+  const offer = SUPPORTED_OFFERS.find((candidate) => candidate.id === offerId);
+  if (offer === undefined) throw new Error(`Missing quote fixture for ${offerId}`);
+  return {
+    offerId,
+    merchant: offer.merchant,
+    seller: offer.seller,
+    product: SUPPORTED_PRODUCT,
+    itemTotalInr: totalInr - 500,
+    deliveryInr: 300,
+    taxesInr: 200,
+    appliedDiscounts: [],
+    advertisedDiscounts: [],
+    cashbackInr: 0,
+    rewardPoints: 0,
+    totalInr,
+    purchaseAvailable,
+  };
+}
 
 describe("Remedy Ranking", () => {
   it.each([
@@ -162,9 +182,9 @@ describe("Remedy Ranking", () => {
   it("uses lower purchase price only after the remedy rules", async () => {
     const policies = SUPPORTED_OFFERS.map((offer) => makePolicy(offer.id));
     const quotes: ReadonlyArray<CheckoutQuote> = [
-      { offerId: "headphone-zone", totalInr: 10_000, purchaseAvailable: true },
-      { offerId: "concept-kart", totalInr: 10_001, purchaseAvailable: true },
-      { offerId: "flipkart", totalInr: 10_002, purchaseAvailable: false },
+      quoteFor("headphone-zone", 10_000, true),
+      quoteFor("concept-kart", 10_001, true),
+      quoteFor("flipkart", 10_002, false),
     ];
     const result = await new AssessmentWorkflow(makeAdapters(policies, quotes)).assess(
       SUPPORTED_PRODUCT,
