@@ -2,13 +2,14 @@ import type { PurchaseAuthorization, UndoRecord } from "../domain";
 import { EvidenceCard } from "./EvidenceCard";
 
 /** Renders the explicit decision point without submitting checkout. */
-export function CheckoutStage(props: { readonly authorization: PurchaseAuthorization; readonly onDecline: () => void }) {
+export function CheckoutStage(props: { readonly authorization: PurchaseAuthorization; readonly error: string | undefined; readonly onDecline: () => void }) {
   return (
     <div className="stage-card compact decision-card">
       <p className="step-kicker">Step 6 of 7</p><h2>Checkout decision</h2>
       <div className="decision-total"><span>Maximum authorized total</span><strong>₹{props.authorization.binding.maximumTotalInr.toLocaleString("en-IN")}</strong></div>
       <dl className="summary-list"><div><dt>Purchase Authorization</dt><dd>{props.authorization.id} · Active</dd></div><div><dt>Expires</dt><dd>{new Date(props.authorization.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Merchant / seller</dt><dd>{props.authorization.binding.merchant} / {props.authorization.binding.seller}</dd></div><div><dt>Destination</dt><dd>{props.authorization.binding.destinationReference}</dd></div><div><dt>Payment method</dt><dd>Prava one-time prepaid sandbox checkout</dd></div></dl>
       <p className="stage-copy">Authorization is active and single-use. No checkout has been submitted. Declining creates an Undo Record without contacting Prava checkout.</p>
+      {props.error !== undefined && <p className="error-message" role="alert">{props.error}</p>}
       <div className="button-row"><button className="secondary-button" onClick={props.onDecline} type="button">Decline purchase</button><button className="primary-button" disabled type="button">Authorize sandbox checkout</button></div>
       <small className="disabled-note">Purchase submission belongs to the next implementation issue.</small>
     </div>

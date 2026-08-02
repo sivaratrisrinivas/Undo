@@ -240,7 +240,7 @@ export type ApprovalSummaryResult =
   | { readonly _tag: "ok"; readonly value: ApprovalSummary }
   | {
       readonly _tag: "err";
-      readonly reason: "selection_mismatch" | "summary_incomplete" | "purchase_blocked";
+      readonly reason: "selection_mismatch" | "summary_incomplete";
     };
 
 /** The supported Prava checkout method bound to buyer approval. */
@@ -278,7 +278,12 @@ export type PurchaseAuthorizationResult =
   | { readonly _tag: "ok"; readonly value: PurchaseAuthorization }
   | {
       readonly _tag: "err";
-      readonly reason: "selection_mismatch" | "summary_incomplete" | "purchase_blocked";
+      readonly reason:
+        | "selection_mismatch"
+        | "summary_incomplete"
+        | "purchase_blocked"
+        | "authorization_id_conflict"
+        | "authorization_unavailable";
     }
   | {
       readonly _tag: "err";
@@ -310,6 +315,7 @@ export type CheckoutSubmissionClaimResult =
       readonly _tag: "err";
       readonly reason:
         | "authorization_invalid"
+        | "authorization_unavailable"
         | "authorization_used"
         | "authorization_expired"
         | "unsupported_payment_method"
@@ -377,6 +383,17 @@ export type UndoRecord = {
     readonly rankingRules: "remedy-ranking/1.0";
   };
 };
+
+/** Typed outcome of recording a buyer decline without submitting checkout. */
+export type BuyerDeclineResult =
+  | { readonly _tag: "ok"; readonly value: UndoRecord }
+  | {
+      readonly _tag: "err";
+      readonly reason:
+        | "selection_mismatch"
+        | "authorization_invalid"
+        | "authorization_unavailable";
+    };
 
 /** Fixed Product identity shared by every supported Offer. */
 export const SUPPORTED_PRODUCT: Product = {

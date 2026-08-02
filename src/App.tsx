@@ -136,9 +136,9 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     setStage("approval");
   }
 
-  function authorizePurchase() {
+  async function authorizePurchase() {
     if (assessment === undefined || selectedOffer === undefined) return;
-    const result = workflow.authorizePurchase(
+    const result = await workflow.authorizePurchase(
       assessment,
       selectedOffer,
       acknowledgedWarnings,
@@ -164,11 +164,17 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     await compareOffers();
   }
 
-  function declinePurchase() {
+  async function declinePurchase() {
     if (assessment === undefined || selectedOffer === undefined) {
       return;
     }
-    setRecord(workflow.decline(assessment, selectedOffer, authorization));
+    const result = await workflow.decline(assessment, selectedOffer, authorization);
+    if (result._tag === "err") {
+      setError("Unable to save the decline safely. No checkout was submitted.");
+      return;
+    }
+    setError(undefined);
+    setRecord(result.value);
     setStage("record");
   }
 
@@ -200,8 +206,8 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
           {stage === "comparison" && assessment !== undefined && <ComparisonStage assessment={assessment} selectedOffer={selectedOffer} onContinue={() => setStage("evidence")} onSelect={(offer) => selectOffer(offer.offer.id)} />}
           {stage === "review" && <EvidenceReviewStage candidates={reviewCandidates} loading={loading} onApprove={() => void approveEvidence()} />}
           {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={reviewApprovalSummary} />}
-          {stage === "approval" && approvalSummary !== undefined && selectedOffer !== undefined && <ApprovalStage summary={approvalSummary} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warningId, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warningId); else next.delete(warningId); return next; })} onAuthorize={authorizePurchase} />}
-          {stage === "checkout" && authorization !== undefined && <CheckoutStage authorization={authorization} onDecline={declinePurchase} />}
+          {stage === "approval" && approvalSummary !== undefined && selectedOffer !== undefined && <ApprovalStage summary={approvalSummary} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warningId, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warningId); else next.delete(warningId); return next; })} onAuthorize={() => void authorizePurchase()} />}
+          {stage === "checkout" && authorization !== undefined && <CheckoutStage authorization={authorization} error={error} onDecline={() => void declinePurchase()} />}
           {stage === "record" && record !== undefined && <RecordStage record={record} />}
         </section>
       </main>

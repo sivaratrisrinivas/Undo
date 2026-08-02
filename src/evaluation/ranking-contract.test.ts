@@ -13,6 +13,7 @@ import {
   type PolicyAssessment,
 } from "../domain";
 import { AssessmentWorkflow, type AssessmentAdapters } from "../workflow";
+import { createInMemoryPurchaseAuthorizationRepository } from "../adapters/fake-adapters";
 import {
   FROZEN_RANKING_SCENARIOS,
   type FrozenRankingOffer,
@@ -184,6 +185,7 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       loadCache: () => Promise.resolve(scenario.useReviewedCache ? cache : undefined),
       saveCache: () => Promise.resolve(),
     },
+    authorization: createInMemoryPurchaseAuthorizationRepository(),
     now: () => NOW,
     nextAuthorizationId: () => "frozen-ranking-authorization",
     nextRecordId: () => "frozen-ranking-record",

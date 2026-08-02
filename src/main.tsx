@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { createBrowserEvidenceRepository } from "./adapters/browser-evidence-repository";
+import { createBrowserPurchaseAuthorizationRepository } from "./adapters/browser-purchase-authorization-repository";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { createOpenAiPolicyExtractionAdapter } from "./adapters/openai-policy-extraction";
 import { createPravaShoppingAdapter } from "./adapters/prava-shopping";
@@ -15,13 +16,16 @@ if (root === null) {
   throw new Error("Root element is missing");
 }
 
-const baseAdapters = createFakeAdapters();
+const baseAdapters = {
+  ...createFakeAdapters(),
+  authorization: createBrowserPurchaseAuthorizationRepository(localStorage, navigator.locks),
+  nextAuthorizationId: () => crypto.randomUUID(),
+};
 const adapters =
   import.meta.env.VITE_EVIDENCE_MODE === "fake"
     ? baseAdapters
     : {
         ...baseAdapters,
-        nextAuthorizationId: () => crypto.randomUUID(),
         policyContract: { purchaseEnabled: () => POLICY_CONTRACT_RELEASE.purchaseEnabled },
         evidenceApplicability: {
           appliesToProduct: (_product: Product, snapshot: EvidenceSnapshot) =>

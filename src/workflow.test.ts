@@ -11,6 +11,7 @@ import {
   type PolicyAssessment,
 } from "./domain";
 import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
+import { createInMemoryPurchaseAuthorizationRepository } from "./adapters/fake-adapters";
 
 const snapshots: ReadonlyArray<EvidenceSnapshot> = SUPPORTED_OFFERS.map((offer) => {
   const source = OFFICIAL_EVIDENCE_SOURCES.find((candidate) => candidate.offerId === offer.id);
@@ -92,6 +93,7 @@ function makeAdapters(
       loadCache: () => Promise.resolve(undefined),
       saveCache: () => Promise.resolve(),
     },
+    authorization: createInMemoryPurchaseAuthorizationRepository(),
     now: () => "2026-08-01T12:00:00.000Z",
     nextAuthorizationId: () => "ranking-authorization",
     nextRecordId: () => "ranking-test",

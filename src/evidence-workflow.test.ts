@@ -14,6 +14,7 @@ import {
   type ReviewedEvidenceCache,
 } from "./domain";
 import { AssessmentWorkflow, type AssessmentAdapters } from "./workflow";
+import { createInMemoryPurchaseAuthorizationRepository } from "./adapters/fake-adapters";
 
 const collectedAt = "2026-08-02T08:00:00.000Z";
 
@@ -146,6 +147,7 @@ function adapters(
       loadCache: () => Promise.resolve(options?.cache),
       saveCache: () => Promise.resolve(),
     },
+    authorization: createInMemoryPurchaseAuthorizationRepository(),
     now: () => "2026-08-02T09:00:00.000Z",
     nextAuthorizationId: () => "evidence-authorization",
     nextRecordId: () => "evidence-record",

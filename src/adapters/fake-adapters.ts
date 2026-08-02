@@ -5,7 +5,11 @@ import type {
   ReviewedEvidenceCache,
 } from "../domain";
 import { POLICY_FACTS, SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "../domain";
-import type { AssessmentAdapters } from "../workflow";
+import type {
+  AssessmentAdapters,
+  PurchaseAuthorizationRepository,
+  StoredPurchaseAuthorization,
+} from "../workflow";
 
 /** Observable counters exposed by the deterministic fake boundary. */
 export type FakeAdapterActivity = {
@@ -203,6 +207,35 @@ const quotes: ReadonlyArray<CheckoutQuote> = [
   quoteFor("flipkart", 14_799, false),
 ];
 
+/** Creates a deterministic repository with atomic in-memory lifecycle transitions. */
+export function createInMemoryPurchaseAuthorizationRepository(): PurchaseAuthorizationRepository {
+  const records = new Map<string, StoredPurchaseAuthorization>();
+  return {
+    create(id, value) {
+      if (records.has(id)) return Promise.resolve("duplicate");
+      records.set(id, value);
+      return Promise.resolve("created");
+    },
+    read(id, authorizationSnapshot) {
+      const value = records.get(id);
+      return Promise.resolve(
+        value === undefined || value.authorizationSnapshot !== authorizationSnapshot
+          ? { _tag: "invalid" as const }
+          : { _tag: "ok" as const, value },
+      );
+    },
+    transition(id, authorizationSnapshot, nextState) {
+      const value = records.get(id);
+      if (value === undefined || value.authorizationSnapshot !== authorizationSnapshot) {
+        return Promise.resolve("invalid");
+      }
+      if (value.state !== "active") return Promise.resolve(value.state);
+      records.set(id, { ...value, state: nextState });
+      return Promise.resolve("updated");
+    },
+  };
+}
+
 /** Creates deterministic Senso, OpenAI, and Prava substitutes for the walking skeleton. */
 export function createFakeAdapters(options?: {
   readonly now?: string;
@@ -272,6 +305,7 @@ export function createFakeAdapters(options?: {
   );
   let cache: ReviewedEvidenceCache | undefined;
   let authorizationSequence = 0;
+  const authorization = createInMemoryPurchaseAuthorizationRepository();
 
   return {
     activity,
@@ -370,6 +404,7 @@ export function createFakeAdapters(options?: {
         return Promise.resolve();
       },
     },
+    authorization,
     now: () => options?.now ?? "2026-08-01T12:00:00.000Z",
     nextAuthorizationId: () => {
       authorizationSequence += 1;

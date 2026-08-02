@@ -4,6 +4,7 @@ import type {
   AssessedOffer,
   BuyerOfferSelection,
   BuyerOfferSelectionResult,
+  BuyerDeclineResult,
   CheckoutSubmissionClaim,
   CheckoutSubmissionClaimResult,
   CheckoutQuote,
@@ -56,9 +57,38 @@ export type AssessmentAdapters = {
     loadCache(product: Product): Promise<ReviewedEvidenceCache | undefined>;
     saveCache(cache: ReviewedEvidenceCache): Promise<void>;
   };
+  readonly authorization: PurchaseAuthorizationRepository;
   readonly now: () => string;
   readonly nextAuthorizationId: () => string;
   readonly nextRecordId: () => string;
+};
+
+/** Durable state retained for one Purchase Authorization lifecycle. */
+export type StoredPurchaseAuthorization = {
+  readonly authorizationSnapshot: string;
+  readonly assessmentSnapshot: string;
+  readonly state: "active" | "invalidated" | "used";
+};
+
+/** Atomic persistence boundary for single-use Purchase Authorization transitions. */
+export type PurchaseAuthorizationRepository = {
+  create(
+    id: string,
+    value: StoredPurchaseAuthorization,
+  ): Promise<"created" | "duplicate" | "unavailable">;
+  read(
+    id: string,
+    authorizationSnapshot: string,
+  ): Promise<
+    | { readonly _tag: "ok"; readonly value: StoredPurchaseAuthorization }
+    | { readonly _tag: "invalid" }
+    | { readonly _tag: "unavailable" }
+  >;
+  transition(
+    id: string,
+    authorizationSnapshot: string,
+    nextState: "invalidated" | "used",
+  ): Promise<"updated" | "invalid" | "invalidated" | "unavailable" | "used">;
 };
 
 /** Typed failure returned by an external adapter instead of rejecting. */
@@ -212,12 +242,7 @@ function hasValidQuoteBreakdown(quote: CheckoutQuote): boolean {
 function opaqueDestinationReference(input: string): string {
   const trimmed = input.trim();
   if (/destination-ref-[a-z0-9-]+$/i.test(trimmed)) return trimmed;
-  let hash = 2_166_136_261;
-  for (const character of trimmed) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return `destination-ref-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return `destination-ref-${stableFingerprint(trimmed)}`;
 }
 
 function stableFingerprint(value: string): string {
@@ -277,15 +302,6 @@ function formatProductMismatches(equivalence: ProductEquivalence): string {
 
 /** Coordinates the high-level assessment while keeping external behavior injectable. */
 export class AssessmentWorkflow {
-  private readonly authorizations = new Map<
-    string,
-    {
-      readonly authorizationSnapshot: string;
-      readonly assessmentSnapshot: string;
-      state: "active" | "used";
-    }
-  >();
-
   constructor(private readonly adapters: AssessmentAdapters) {}
 
   /** Saves a human approval for the extracted facts tied to one exact fingerprint. */
@@ -802,11 +818,11 @@ export class AssessmentWorkflow {
   }
 
   /** Converts explicit per-warning approval into a Purchase Authorization. */
-  authorizePurchase(
+  async authorizePurchase(
     assessment: ReversibilityAssessment,
     selectedOffer: BuyerOfferSelection,
     acknowledgedWarningIds: ReadonlySet<string>,
-  ): PurchaseAuthorizationResult {
+  ): Promise<PurchaseAuthorizationResult> {
     if (!this.adapters.policyContract.purchaseEnabled()) {
       return { _tag: "err", reason: "purchase_blocked" };
     }
@@ -846,53 +862,80 @@ export class AssessmentWorkflow {
       paymentMethod: "prava_one_time_prepaid",
       acknowledgedWarningIds: summaryResult.value.materialWarnings.map((warning) => warning.id),
     };
-    if (this.authorizations.has(authorization.id)) {
-      throw new Error("The authorization ID generator returned a duplicate identifier");
-    }
-    this.authorizations.set(authorization.id, {
+    const created = await this.adapters.authorization.create(authorization.id, {
       authorizationSnapshot: JSON.stringify(authorization),
       assessmentSnapshot: JSON.stringify(assessment),
       state: "active",
     });
+    if (created === "duplicate") {
+      return { _tag: "err", reason: "authorization_id_conflict" };
+    }
+    if (created === "unavailable") {
+      return { _tag: "err", reason: "authorization_unavailable" };
+    }
     return { _tag: "ok", value: authorization };
   }
 
   /** Atomically claims the authorization before a caller submits one checkout attempt. */
-  claimCheckoutSubmission(claim: CheckoutSubmissionClaim): CheckoutSubmissionClaimResult {
-    const registered = this.authorizations.get(claim.authorization.id);
-    if (
-      registered === undefined ||
-      registered.authorizationSnapshot !== JSON.stringify(claim.authorization)
-    ) {
+  async claimCheckoutSubmission(
+    claim: CheckoutSubmissionClaim,
+  ): Promise<CheckoutSubmissionClaimResult> {
+    const authorizationSnapshot = JSON.stringify(claim.authorization);
+    const stored = await this.adapters.authorization.read(
+      claim.authorization.id,
+      authorizationSnapshot,
+    );
+    if (stored._tag === "unavailable") {
+      return { _tag: "err", reason: "authorization_unavailable" };
+    }
+    if (stored._tag === "invalid") {
       return { _tag: "err", reason: "authorization_invalid" };
     }
-    if (registered.state === "used") {
+    if (stored.value.state === "used") {
       return { _tag: "err", reason: "authorization_used" };
     }
+    if (stored.value.state === "invalidated") {
+      return { _tag: "err", reason: "authorization_invalid" };
+    }
+    const invalidate = async (
+      reason: Extract<CheckoutSubmissionClaimResult, { readonly _tag: "err" }>["reason"],
+    ): Promise<CheckoutSubmissionClaimResult> => {
+      const transitioned = await this.adapters.authorization.transition(
+        claim.authorization.id,
+        authorizationSnapshot,
+        "invalidated",
+      );
+      if (transitioned === "unavailable") {
+        return { _tag: "err", reason: "authorization_unavailable" };
+      }
+      if (transitioned === "used") return { _tag: "err", reason: "authorization_used" };
+      if (transitioned !== "updated") return { _tag: "err", reason: "authorization_invalid" };
+      return { _tag: "err", reason };
+    };
     const now = Date.parse(this.adapters.now());
     if (!Number.isFinite(now)) {
       throw new Error("The injected clock returned an invalid timestamp");
     }
     if (now >= Date.parse(claim.authorization.expiresAt)) {
-      return { _tag: "err", reason: "authorization_expired" };
+      return await invalidate("authorization_expired");
     }
     if (claim.paymentMethod !== claim.authorization.paymentMethod) {
-      return { _tag: "err", reason: "unsupported_payment_method" };
+      return await invalidate("unsupported_payment_method");
     }
     if (claim.quantity !== claim.authorization.binding.quantity) {
-      return { _tag: "err", reason: "quantity_changed" };
+      return await invalidate("quantity_changed");
     }
     if (!compareProductIdentity(claim.authorization.binding.product, claim.assessment.product).equivalent) {
-      return { _tag: "err", reason: "product_changed" };
+      return await invalidate("product_changed");
     }
     if (claim.selectedOffer.offer.offer.merchant !== claim.authorization.binding.merchant) {
-      return { _tag: "err", reason: "merchant_changed" };
+      return await invalidate("merchant_changed");
     }
     if (claim.selectedOffer.offer.offer.seller !== claim.authorization.binding.seller) {
-      return { _tag: "err", reason: "seller_changed" };
+      return await invalidate("seller_changed");
     }
     if (claim.assessment.destinationReference !== claim.authorization.binding.destinationReference) {
-      return { _tag: "err", reason: "destination_changed" };
+      return await invalidate("destination_changed");
     }
     const selectedOfferResult = this.selectOffer(
       claim.assessment,
@@ -902,34 +945,43 @@ export class AssessmentWorkflow {
       selectedOfferResult._tag === "err" ||
       selectedOfferResult.value.selection !== claim.selectedOffer.selection ||
       claim.selectedOffer.offer.offer.id !== claim.authorization.binding.offerId ||
-      registered.assessmentSnapshot !== JSON.stringify(claim.assessment) ||
+      stored.value.assessmentSnapshot !== JSON.stringify(claim.assessment) ||
       claim.assessment.premiumLimitInr !== claim.authorization.binding.premiumLimitInr
     ) {
-      return { _tag: "err", reason: "approval_changed" };
+      return await invalidate("approval_changed");
     }
     if (
       claim.quote.offerId !== claim.authorization.binding.offerId ||
       !compareProductIdentity(claim.authorization.binding.product, claim.quote.product).equivalent
     ) {
-      return { _tag: "err", reason: "product_changed" };
+      return await invalidate("product_changed");
     }
     if (claim.quote.merchant !== claim.authorization.binding.merchant) {
-      return { _tag: "err", reason: "merchant_changed" };
+      return await invalidate("merchant_changed");
     }
     if (claim.quote.seller !== claim.authorization.binding.seller) {
-      return { _tag: "err", reason: "seller_changed" };
+      return await invalidate("seller_changed");
     }
     if (claim.quote.destinationReference !== claim.authorization.binding.destinationReference) {
-      return { _tag: "err", reason: "destination_changed" };
+      return await invalidate("destination_changed");
     }
     if (!claim.quote.purchaseAvailable || !hasValidQuoteBreakdown(claim.quote)) {
-      return { _tag: "err", reason: "quote_invalid" };
+      return await invalidate("quote_invalid");
     }
     if (claim.quote.totalInr > claim.authorization.binding.maximumTotalInr) {
-      return { _tag: "err", reason: "total_exceeded" };
+      return await invalidate("total_exceeded");
     }
 
-    registered.state = "used";
+    const transitioned = await this.adapters.authorization.transition(
+      claim.authorization.id,
+      authorizationSnapshot,
+      "used",
+    );
+    if (transitioned === "unavailable") {
+      return { _tag: "err", reason: "authorization_unavailable" };
+    }
+    if (transitioned === "used") return { _tag: "err", reason: "authorization_used" };
+    if (transitioned !== "updated") return { _tag: "err", reason: "authorization_invalid" };
     return {
       _tag: "ok",
       value: {
@@ -945,19 +997,67 @@ export class AssessmentWorkflow {
   }
 
   /** Records a buyer decision without submitting checkout. */
-  decline(
+  async decline(
     assessment: ReversibilityAssessment,
     selectedOffer: BuyerOfferSelection,
     authorization?: PurchaseAuthorization,
-  ): UndoRecord {
-    return {
+  ): Promise<BuyerDeclineResult> {
+    const validatedSelection = this.selectOffer(assessment, selectedOffer.offer.offer.id);
+    if (
+      validatedSelection._tag === "err" ||
+      validatedSelection.value.selection !== selectedOffer.selection ||
+      JSON.stringify(validatedSelection.value.offer) !== JSON.stringify(selectedOffer.offer)
+    ) {
+      return { _tag: "err", reason: "selection_mismatch" };
+    }
+    const selected = validatedSelection.value;
+    let authorizationState: UndoRecord["authorizationState"] = "not_requested";
+    if (authorization !== undefined) {
+      if (
+        authorization.binding.assessmentFingerprint !== assessmentFingerprint(assessment) ||
+        authorization.binding.offerId !== selected.offer.offer.id ||
+        authorization.binding.merchant !== selected.offer.offer.merchant ||
+        authorization.binding.seller !== selected.offer.offer.seller ||
+        authorization.binding.destinationReference !== assessment.destinationReference
+      ) {
+        return { _tag: "err", reason: "authorization_invalid" };
+      }
+      const authorizationSnapshot = JSON.stringify(authorization);
+      const stored = await this.adapters.authorization.read(
+        authorization.id,
+        authorizationSnapshot,
+      );
+      if (stored._tag === "unavailable") {
+        return { _tag: "err", reason: "authorization_unavailable" };
+      }
+      if (
+        stored._tag === "invalid" ||
+        stored.value.state !== "active" ||
+        stored.value.assessmentSnapshot !== JSON.stringify(assessment)
+      ) {
+        return { _tag: "err", reason: "authorization_invalid" };
+      }
+      const transitioned = await this.adapters.authorization.transition(
+        authorization.id,
+        authorizationSnapshot,
+        "invalidated",
+      );
+      if (transitioned === "unavailable") {
+        return { _tag: "err", reason: "authorization_unavailable" };
+      }
+      if (transitioned !== "updated") {
+        return { _tag: "err", reason: "authorization_invalid" };
+      }
+      authorizationState = "authorized_not_submitted";
+    }
+    return { _tag: "ok", value: {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
       outcome: "buyer_declined",
       product: assessment.product,
-      selectedMerchant: selectedOffer.offer.offer.merchant,
-      selectedSeller: selectedOffer.offer.offer.seller,
-      confirmedCheckoutTotalInr: selectedOffer.offer.checkoutQuote.totalInr,
+      selectedMerchant: selected.offer.offer.merchant,
+      selectedSeller: selected.offer.offer.seller,
+      confirmedCheckoutTotalInr: selected.offer.checkoutQuote.totalInr,
       premiumLimitInr: assessment.premiumLimitInr,
       destinationReference: assessment.destinationReference,
       evidence: assessment.offers.map((offer) => offer.evidence),
@@ -966,12 +1066,11 @@ export class AssessmentWorkflow {
           assessment.ranking._tag === "winner"
             ? [assessment.ranking.offer.offer.id]
             : assessment.ranking.offers.map((offer) => offer.offer.id),
-        selectedOfferId: selectedOffer.offer.offer.id,
-        selection: selectedOffer.selection,
+        selectedOfferId: selected.offer.offer.id,
+        selection: selected.selection,
         rankingRules: "remedy-ranking/1.0",
       },
-      authorizationState:
-        authorization === undefined ? "not_requested" : "authorized_not_submitted",
+      authorizationState,
       assumptions: [
         "Each curated Offer was checked against the supported Product identity before any Purchase Authorization.",
         "Checkout totals were supplied by the configured Prava boundary for the selected destination.",
@@ -983,7 +1082,7 @@ export class AssessmentWorkflow {
         model: this.adapters.openAi.modelVersion(),
         rankingRules: "remedy-ranking/1.0",
       },
-    };
+    } };
   }
 
   private hasCompleteEvidence(product: Product, evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
@@ -1020,7 +1119,15 @@ export class AssessmentWorkflow {
       summary.confirmedCheckoutTotalInr >= 0 &&
       Number.isFinite(summary.premiumLimitInr) &&
       summary.premiumLimitInr >= 0 &&
-      Number.isFinite(Date.parse(summary.evidence.collectedAt))
+      Number.isFinite(Date.parse(summary.evidence.collectedAt)) &&
+      summary.remedyWindow.days > 0 &&
+      Number.isSafeInteger(summary.remedyWindow.days) &&
+      summary.materialConditions.every((condition) => condition.trim() !== "") &&
+      summary.materialWarnings.every(
+        (warning) => warning.id.trim() !== "" && warning.detail.trim() !== "",
+      ) &&
+      new Set(summary.materialWarnings.map((warning) => warning.id)).size ===
+        summary.materialWarnings.length
     );
   }
 

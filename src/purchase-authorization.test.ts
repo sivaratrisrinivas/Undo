@@ -31,7 +31,7 @@ async function authorizeSelectedOffer(workflow: AssessmentWorkflow) {
   const selected = await assessSelectedOffer(workflow);
   const summaryResult = workflow.createApprovalSummary(selected.assessment, selected.selection);
   if (summaryResult._tag === "err") throw new Error(summaryResult.reason);
-  const authorizationResult = workflow.authorizePurchase(
+  const authorizationResult = await workflow.authorizePurchase(
     selected.assessment,
     selected.selection,
     new Set(summaryResult.value.materialWarnings.map((warning) => warning.id)),
@@ -88,7 +88,7 @@ describe("Purchase Authorization", () => {
     ]);
 
     expect(
-      workflow.authorizePurchase(
+      await workflow.authorizePurchase(
         assessment,
         selection,
         new Set(["unopened-only"]),
@@ -111,7 +111,7 @@ describe("Purchase Authorization", () => {
       summaryResult.value.materialWarnings.map((warning) => warning.id),
     );
 
-    const authorizationResult = workflow.authorizePurchase(
+    const authorizationResult = await workflow.authorizePurchase(
       assessment,
       selection,
       acknowledgedWarningIds,
@@ -146,7 +146,7 @@ describe("Purchase Authorization", () => {
       totalInr: 14_500,
     };
     expect(
-      workflow.claimCheckoutSubmission({
+      await workflow.claimCheckoutSubmission({
         authorization: authorizationResult.value,
         assessment,
         selectedOffer: selection,
@@ -171,7 +171,7 @@ describe("Purchase Authorization", () => {
       second.selection,
     );
     if (secondSummary._tag === "err") throw new Error(secondSummary.reason);
-    const secondAuthorization = secondWorkflow.authorizePurchase(
+    const secondAuthorization = await secondWorkflow.authorizePurchase(
       second.assessment,
       second.selection,
       new Set(secondSummary.value.materialWarnings.map((warning) => warning.id)),
@@ -179,7 +179,7 @@ describe("Purchase Authorization", () => {
     if (secondAuthorization._tag === "err") throw new Error(secondAuthorization.reason);
 
     expect(
-      secondWorkflow.claimCheckoutSubmission({
+      await secondWorkflow.claimCheckoutSubmission({
         authorization: secondAuthorization.value,
         assessment: second.assessment,
         selectedOffer: second.selection,
@@ -192,6 +192,16 @@ describe("Purchase Authorization", () => {
         paymentMethod: "prava_one_time_prepaid",
       }),
     ).toEqual({ _tag: "err", reason: "total_exceeded" });
+    expect(
+      await secondWorkflow.claimCheckoutSubmission({
+        authorization: secondAuthorization.value,
+        assessment: second.assessment,
+        selectedOffer: second.selection,
+        quote: second.selection.offer.checkoutQuote,
+        quantity: 1,
+        paymentMethod: "prava_one_time_prepaid",
+      }),
+    ).toEqual({ _tag: "err", reason: "authorization_invalid" });
   });
 
   it("expires at the exact 10-minute boundary", async () => {
@@ -204,7 +214,7 @@ describe("Purchase Authorization", () => {
     now = "2026-08-01T12:10:00.000Z";
 
     expect(
-      workflow.claimCheckoutSubmission({
+      await workflow.claimCheckoutSubmission({
         authorization: authorized.authorization,
         assessment: authorized.assessment,
         selectedOffer: authorized.selection,
@@ -216,9 +226,8 @@ describe("Purchase Authorization", () => {
   });
 
   it("permits exactly one checkout claim and rejects attempted reuse", async () => {
-    const workflow = new AssessmentWorkflow(
-      createFakeAdapters({ authorizationId: "authorization-single-use" }),
-    );
+    const adapters = createFakeAdapters({ authorizationId: "authorization-single-use" });
+    const workflow = new AssessmentWorkflow(adapters);
     const authorized = await authorizeSelectedOffer(workflow);
     const claim = {
       authorization: authorized.authorization,
@@ -229,8 +238,13 @@ describe("Purchase Authorization", () => {
       paymentMethod: "prava_one_time_prepaid",
     } as const;
 
-    expect(workflow.claimCheckoutSubmission(claim)._tag).toBe("ok");
-    expect(workflow.claimCheckoutSubmission(claim)).toEqual({
+    const reconstructedWorkflow = new AssessmentWorkflow(adapters);
+    const [firstClaim, concurrentClaim] = await Promise.all([
+      workflow.claimCheckoutSubmission(claim),
+      reconstructedWorkflow.claimCheckoutSubmission(claim),
+    ]);
+    expect([firstClaim._tag, concurrentClaim._tag].sort()).toEqual(["err", "ok"]);
+    expect([firstClaim, concurrentClaim]).toContainEqual({
       _tag: "err",
       reason: "authorization_used",
     });
@@ -299,7 +313,7 @@ describe("Purchase Authorization", () => {
         : authorized.assessment;
 
     expect(
-      workflow.claimCheckoutSubmission({
+      await workflow.claimCheckoutSubmission({
         authorization: authorized.authorization,
         assessment,
         selectedOffer: authorized.selection,
@@ -321,7 +335,7 @@ describe("Purchase Authorization", () => {
     };
 
     expect(
-      workflow.claimCheckoutSubmission({
+      await workflow.claimCheckoutSubmission({
         authorization: authorized.authorization,
         assessment: changedAssessment,
         selectedOffer: authorized.selection,
@@ -344,7 +358,7 @@ describe("Purchase Authorization", () => {
     if (overrideResult._tag === "err") throw new Error(overrideResult.reason);
 
     expect(
-      workflow.claimCheckoutSubmission({
+      await workflow.claimCheckoutSubmission({
         authorization: authorized.authorization,
         assessment: authorized.assessment,
         selectedOffer: overrideResult.value,
@@ -354,37 +368,44 @@ describe("Purchase Authorization", () => {
       }),
     ).toEqual({ _tag: "err", reason: "merchant_changed" });
 
+    const materialWorkflow = new AssessmentWorkflow(
+      createFakeAdapters({
+        authorizationId: "authorization-material-policy",
+        scenario: "override",
+      }),
+    );
+    const materialAuthorized = await authorizeSelectedOffer(materialWorkflow);
     const changedOffer = {
-      ...authorized.selection.offer,
+      ...materialAuthorized.selection.offer,
       policy: {
-        ...authorized.selection.offer.policy,
+        ...materialAuthorized.selection.offer.policy,
         materialConditions: [
-          ...authorized.selection.offer.policy.materialConditions,
+          ...materialAuthorized.selection.offer.policy.materialConditions,
           {
             detail: "Keep every accessory.",
-            citation: authorized.selection.offer.policy.materialConditions[0]?.citation ?? {
-              quote: authorized.selection.offer.policy.quote,
-              sourceUrl: authorized.selection.offer.evidence.sourceUrl,
+            citation: materialAuthorized.selection.offer.policy.materialConditions[0]?.citation ?? {
+              quote: materialAuthorized.selection.offer.policy.quote,
+              sourceUrl: materialAuthorized.selection.offer.evidence.sourceUrl,
             },
           },
         ],
       },
     };
     const changedAssessment = {
-      ...authorized.assessment,
-      offers: authorized.assessment.offers.map((offer) =>
+      ...materialAuthorized.assessment,
+      offers: materialAuthorized.assessment.offers.map((offer) =>
         offer.offer.id === changedOffer.offer.id ? changedOffer : offer,
       ),
       ranking: {
         _tag: "winner" as const,
         offer: changedOffer,
-        reason: authorized.assessment.ranking.reason,
+        reason: materialAuthorized.assessment.ranking.reason,
       },
     };
 
     expect(
-      workflow.claimCheckoutSubmission({
-        authorization: authorized.authorization,
+      await materialWorkflow.claimCheckoutSubmission({
+        authorization: materialAuthorized.authorization,
         assessment: changedAssessment,
         selectedOffer: { offer: changedOffer, selection: "ranking_winner" },
         quote: changedOffer.checkoutQuote,
@@ -406,7 +427,7 @@ describe("Purchase Authorization", () => {
     if (summaryResult._tag === "err") throw new Error(summaryResult.reason);
 
     expect(
-      workflow.authorizePurchase(
+      await workflow.authorizePurchase(
         assessment,
         selection,
         new Set(summaryResult.value.materialWarnings.map((warning) => warning.id)),
@@ -420,5 +441,79 @@ describe("Purchase Authorization", () => {
     expect(JSON.stringify(enabled.authorization)).not.toMatch(
       /card(number)?|cvv|secret|credential|token|one[-_ ]?time[-_ ]?password/i,
     );
+  });
+
+  it("refuses an Approval Summary with a blank Material Remedy Condition", async () => {
+    const workflow = new AssessmentWorkflow(createFakeAdapters());
+    const selected = await assessSelectedOffer(workflow);
+    const incompleteOffer = {
+      ...selected.selection.offer,
+      policy: {
+        ...selected.selection.offer.policy,
+        materialConditions: selected.selection.offer.policy.materialConditions.map(
+          (condition) => ({ ...condition, detail: "" }),
+        ),
+      },
+    };
+    const incompleteAssessment = {
+      ...selected.assessment,
+      offers: selected.assessment.offers.map((offer) =>
+        offer.offer.id === incompleteOffer.offer.id ? incompleteOffer : offer,
+      ),
+      ranking: {
+        _tag: "winner" as const,
+        offer: incompleteOffer,
+        reason: selected.assessment.ranking.reason,
+      },
+    };
+    const incompleteSelection = {
+      offer: incompleteOffer,
+      selection: "ranking_winner" as const,
+    };
+
+    expect(
+      workflow.createApprovalSummary(incompleteAssessment, incompleteSelection),
+    ).toEqual({ _tag: "err", reason: "summary_incomplete" });
+    expect(
+      await workflow.authorizePurchase(incompleteAssessment, incompleteSelection, new Set()),
+    ).toEqual({ _tag: "err", reason: "summary_incomplete" });
+  });
+
+  it("does not record or invalidate an authorization for an altered decline selection", async () => {
+    const workflow = new AssessmentWorkflow(
+      createFakeAdapters({ authorizationId: "authorization-decline-validation" }),
+    );
+    const authorized = await authorizeSelectedOffer(workflow);
+    const alteredSelection = {
+      ...authorized.selection,
+      offer: {
+        ...authorized.selection.offer,
+        checkoutQuote: {
+          ...authorized.selection.offer.checkoutQuote,
+          itemTotalInr: 1,
+          totalInr: 1,
+        },
+      },
+    };
+
+    expect(
+      await workflow.decline(
+        authorized.assessment,
+        alteredSelection,
+        authorized.authorization,
+      ),
+    ).toEqual({ _tag: "err", reason: "selection_mismatch" });
+    expect(
+      (
+        await workflow.claimCheckoutSubmission({
+          authorization: authorized.authorization,
+          assessment: authorized.assessment,
+          selectedOffer: authorized.selection,
+          quote: authorized.selection.offer.checkoutQuote,
+          quantity: 1,
+          paymentMethod: "prava_one_time_prepaid",
+        })
+      )._tag,
+    ).toBe("ok");
   });
 });
