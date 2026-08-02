@@ -25,7 +25,7 @@ const evidence: ReadonlyArray<EvidenceSnapshot> = [
     offerId: "headphone-zone",
     merchant: "Headphone Zone",
     sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
-    scope: { kind: "product", value: "Sennheiser HD 560S" },
+    scope: { kind: "category", value: "Selected Easy Exchange products" },
     collectedAt: "2026-08-01T10:30:00.000Z",
     exactText:
       "Eligible products may be returned for a refund within 7 days of delivery when sealed and unopened in the original packaging.",

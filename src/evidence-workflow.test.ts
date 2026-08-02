@@ -211,7 +211,7 @@ describe("Policy Evidence workflow", () => {
       expect(result.value.offers[0]).toMatchObject({
         evidence: {
           merchant: "Headphone Zone",
-          scope: { kind: "product", value: "Sennheiser HD 560S" },
+          scope: { kind: "category", value: "Selected Easy Exchange products" },
           retrievedVia: "senso",
           retrievalState: "current",
         },

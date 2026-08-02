@@ -30,7 +30,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getAllByText(/sealed and unopened/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Current Evidence").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("Reviewed Evidence")).toHaveLength(3);
-    expect(screen.getAllByText("product: Sennheiser HD 560S").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("category: Selected Easy Exchange products").length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", {
         name: /https:\/\/www\.headphonezone\.in\/pages\/help-center-returns-exchanges/,

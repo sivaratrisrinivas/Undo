@@ -43,12 +43,13 @@ describe("Senso evidence backend", () => {
     const response = await retrievePolicyEvidenceFromSenso(SUPPORTED_PRODUCT, {
       apiKey: "test-key",
       fetcher,
+      now: () => "2026-08-02T09:00:00.000Z",
       sources: [
         {
           offerId: "headphone-zone",
           merchant: "Headphone Zone",
           sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
-          scope: { kind: "product", value: "Sennheiser HD 560S" },
+          scope: { kind: "category", value: "Selected Easy Exchange products" },
           kbNodeIds: ["hpz-policy-node-1", "hpz-policy-node-2"],
         },
       ],
@@ -66,7 +67,7 @@ describe("Senso evidence backend", () => {
           offerId: "headphone-zone",
           merchant: "Headphone Zone",
           sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
-          scope: { kind: "product", value: "Sennheiser HD 560S" },
+          scope: { kind: "category", value: "Selected Easy Exchange products" },
           collectedAt: "2026-08-02T08:00:00.000Z",
           exactText: "Exact official return wording.\n\nMore exact official wording.",
         },
@@ -103,11 +104,13 @@ describe("Senso evidence backend", () => {
     ["missing text", { id: "raw-1", type: "raw", processing_status: "complete", updated_at: "2026-08-02T08:00:00.000Z" }],
     ["unfinished processing", { id: "raw-1", type: "raw", processing_status: "processing", updated_at: "2026-08-02T08:00:00.000Z", text: "Policy" }],
     ["invalid capture time", { id: "raw-1", type: "raw", processing_status: "complete", updated_at: "not-a-date", text: "Policy" }],
+    ["capture time beyond the allowed clock skew", { id: "raw-1", type: "raw", processing_status: "complete", updated_at: "2026-08-02T09:06:00.000Z", text: "Policy" }],
   ])("rejects %s from the Senso raw-content boundary", async (_case, payload) => {
     await expect(
       retrievePolicyEvidenceFromSenso(SUPPORTED_PRODUCT, {
         apiKey: "test-key",
         fetcher: () => Promise.resolve(Response.json(payload)),
+        now: () => "2026-08-02T09:00:00.000Z",
         sources: [
           {
             offerId: "headphone-zone",

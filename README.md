@@ -73,6 +73,7 @@ A production host must route `/api/policy-evidence` to `retrievePolicyEvidenceFr
 ```sh
 npm test
 npm run test:policy-contract
+npm run test:senso-live # opt-in live retrieval check; requires configured .env.local
 npm run typecheck
 npm run lint
 npm run build

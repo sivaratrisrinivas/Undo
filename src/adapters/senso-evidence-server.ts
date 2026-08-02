@@ -13,11 +13,13 @@ type SensoRawContent = {
   readonly updatedAt: string;
 };
 
+const MAX_CAPTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 function isSupportedProduct(product: Product): boolean {
   return JSON.stringify(product) === JSON.stringify(SUPPORTED_PRODUCT);
 }
 
-function parseSensoRawContent(value: unknown): SensoRawContent {
+function parseSensoRawContent(value: unknown, latestAllowedCaptureTime: number): SensoRawContent {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Senso returned invalid raw Policy Evidence");
   }
@@ -29,6 +31,7 @@ function parseSensoRawContent(value: unknown): SensoRawContent {
     content.processing_status !== "complete" ||
     typeof content.updated_at !== "string" ||
     !Number.isFinite(Date.parse(content.updated_at)) ||
+    Date.parse(content.updated_at) > latestAllowedCaptureTime ||
     typeof content.text !== "string" ||
     content.text.trim() === ""
   ) {
@@ -44,11 +47,15 @@ export async function retrievePolicyEvidenceFromSenso(
     readonly apiKey: string;
     readonly sources: ReadonlyArray<SensoOfficialSource>;
     readonly fetcher?: typeof fetch;
+    readonly now?: () => string;
   },
 ): Promise<{ readonly documents: ReadonlyArray<Omit<EvidenceSnapshot, "fingerprint" | "retrievedVia" | "retrievalState">> }> {
   if (!isSupportedProduct(product)) throw new Error("Unsupported Product");
   if (options.apiKey.trim() === "") throw new Error("SENSO_API_KEY is not configured");
   const fetcher = options.fetcher ?? fetch;
+  const currentTime = Date.parse((options.now ?? (() => new Date().toISOString()))());
+  if (!Number.isFinite(currentTime)) throw new Error("Current time is invalid");
+  const latestAllowedCaptureTime = currentTime + MAX_CAPTURE_CLOCK_SKEW_MS;
   const documents = await Promise.all(
     options.sources.map(async (source) => {
       if (source.kbNodeIds.length === 0) {
@@ -61,7 +68,7 @@ export async function retrievePolicyEvidenceFromSenso(
             { headers: { "X-API-Key": options.apiKey } },
           );
           if (!response.ok) throw new Error(`Senso content retrieval returned ${response.status}`);
-          return parseSensoRawContent(await response.json());
+          return parseSensoRawContent(await response.json(), latestAllowedCaptureTime);
         }),
       );
       const oldestCaptureTime = Math.min(

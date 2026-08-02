@@ -216,7 +216,7 @@ export const SUPPORTED_OFFERS: ReadonlyArray<Offer> = [
 
 /** Curated official merchant sources accepted for Policy Evidence retrieval. */
 export const OFFICIAL_EVIDENCE_SOURCES = [
-  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "product", value: "Sennheiser HD 560S" } },
+  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "category", value: "Selected Easy Exchange products" } },
   { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/replacement-return-policy", scope: { kind: "category", value: "Headphones" } },
   { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" } },
 ] as const satisfies ReadonlyArray<{

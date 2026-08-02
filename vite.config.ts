@@ -33,15 +33,15 @@ function parseProduct(value: unknown): Product {
   return SUPPORTED_PRODUCT;
 }
 
-function kbNodeIds(value: string | undefined): ReadonlyArray<string> {
+function parseKbNodeIds(value: string | undefined): ReadonlyArray<string> {
   return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function sensoEvidencePlugin(env: Record<string, string>): Plugin {
   const kbNodeIdsByOffer = {
-    "headphone-zone": kbNodeIds(env.SENSO_HEADPHONE_ZONE_KB_NODE_IDS),
-    "concept-kart": kbNodeIds(env.SENSO_CONCEPT_KART_KB_NODE_IDS),
-    flipkart: kbNodeIds(env.SENSO_FLIPKART_KB_NODE_IDS),
+    "headphone-zone": parseKbNodeIds(env.SENSO_HEADPHONE_ZONE_KB_NODE_IDS),
+    "concept-kart": parseKbNodeIds(env.SENSO_CONCEPT_KART_KB_NODE_IDS),
+    flipkart: parseKbNodeIds(env.SENSO_FLIPKART_KB_NODE_IDS),
   } as const;
   const sources: ReadonlyArray<SensoOfficialSource> = OFFICIAL_EVIDENCE_SOURCES.map((source) => ({
     ...source,
