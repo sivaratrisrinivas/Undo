@@ -75,8 +75,8 @@ export function EvidenceCard(props: {
       {policy !== undefined && (
         <div className="evidence-facts">
           <h4>Extracted facts and citations</h4>
-          {policy.citations.map((citation) => (
-            <div className="evidence-fact" key={citation.fact}>
+          {policy.citations.map((citation, index) => (
+            <div className="evidence-fact" key={`${citation.fact}:${index}`}>
               <strong>{citation.fact.replaceAll("_", " ")}: {policyFacts(policy)[citation.fact]}</strong>
               <blockquote>“{citation.quote}”</blockquote>
               <a href={citation.sourceUrl}>{citation.sourceUrl} <span aria-hidden="true">↗</span></a>

@@ -44,6 +44,35 @@ function citation(policy: PolicyAssessment, fact: PolicyField) {
   return policy.citations.filter((candidate) => candidate.fact === fact);
 }
 
+function canonicalCitations(citations: ReturnType<typeof citation>): string {
+  return JSON.stringify(
+    [...citations].sort((left, right) =>
+      `${left.sourceUrl}\u0000${left.quote}`.localeCompare(`${right.sourceUrl}\u0000${right.quote}`),
+    ),
+  );
+}
+
+function supportingDetails(policy: PolicyAssessment): string {
+  return JSON.stringify(
+    [
+      ...policy.materialConditions.map((condition) => ({
+        kind: "condition",
+        detail: condition.detail,
+        citation: condition.citation,
+      })),
+      ...policy.supplementaryRemedies.map((remedy) => ({
+        kind: remedy.kind,
+        detail: remedy.detail,
+        citation: remedy.citation,
+      })),
+    ].sort((left, right) =>
+      `${left.kind}\u0000${left.detail}\u0000${left.citation.sourceUrl}\u0000${left.citation.quote}`.localeCompare(
+        `${right.kind}\u0000${right.detail}\u0000${right.citation.sourceUrl}\u0000${right.citation.quote}`,
+      ),
+    ),
+  );
+}
+
 function fieldValue(policy: PolicyAssessment, fact: PolicyField): unknown {
   return {
     remedy: { changeOfMind: policy.changeOfMind, defect: policy.defect },
@@ -62,17 +91,28 @@ function fieldPasses(
   if (actual === undefined) return false;
   const expectedCitations = citation(entry.expected, fact);
   const actualCitations = citation(actual, fact);
-  const expectedCitation = expectedCitations[0];
-  const actualCitation = actualCitations[0];
+  const supportingDetailsMatch =
+    fact !== "remedy" || supportingDetails(actual) === supportingDetails(entry.expected);
+  const supportingDetailsAreCited =
+    fact !== "remedy" ||
+    [...actual.materialConditions.map((condition) => condition.citation),
+      ...actual.supplementaryRemedies.map((remedy) => remedy.citation)].every(
+      (citation) =>
+        entry.evidence.exactText.includes(citation.quote) &&
+        citation.sourceUrl === entry.evidence.sourceUrl,
+    );
   return (
     JSON.stringify(fieldValue(actual, fact)) === JSON.stringify(fieldValue(entry.expected, fact)) &&
-    expectedCitations.length === 1 &&
-    actualCitations.length === 1 &&
-    expectedCitation !== undefined &&
-    actualCitation !== undefined &&
-    JSON.stringify(actualCitation) === JSON.stringify(expectedCitation) &&
-    entry.evidence.exactText.includes(actualCitation.quote) &&
-    actualCitation.sourceUrl === entry.evidence.sourceUrl
+    expectedCitations.length > 0 &&
+    actualCitations.length > 0 &&
+    canonicalCitations(actualCitations) === canonicalCitations(expectedCitations) &&
+    actualCitations.every(
+      (citation) =>
+        entry.evidence.exactText.includes(citation.quote) &&
+        citation.sourceUrl === entry.evidence.sourceUrl,
+    ) &&
+    supportingDetailsMatch &&
+    supportingDetailsAreCited
   );
 }
 

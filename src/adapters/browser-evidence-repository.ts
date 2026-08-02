@@ -49,6 +49,23 @@ function isPolicy(value: unknown): value is PolicyAssessment {
   // SAFETY: Nested records remain unknown in substance and are fully validated below.
   const window = policy.remedyWindow as Record<string, unknown> | undefined;
   const cost = policy.reversalCost as Record<string, unknown> | undefined;
+  const rawCitations = policy.citations;
+  const citations = Array.isArray(rawCitations) ? rawCitations : [];
+  const citationCardinality =
+    POLICY_FACTS.every((fact) => {
+      const count = citations.filter((citation: unknown) => {
+        if (typeof citation !== "object" || citation === null) return false;
+        // SAFETY: The object/null check establishes a record used only to read an unknown fact.
+        return (citation as Record<string, unknown>).fact === fact;
+      }).length;
+      const allowsMultiple =
+        fact === "remedy" ||
+        (fact === "window" && window?.kind === "unclear") ||
+        (fact === "product_condition" && policy.productCondition === "unclear") ||
+        (fact === "return_transport" && policy.returnTransport === "unclear") ||
+        (fact === "buyer_paid_fees" && cost?.kind === "unclear");
+      return allowsMultiple ? count > 0 : count === 1;
+    });
   return (
     typeof policy.offerId === "string" &&
     ["money_back", "store_credit", "none", "unclear"].includes(String(policy.changeOfMind)) &&
@@ -89,17 +106,18 @@ function isPolicy(value: unknown): value is PolicyAssessment {
       );
     }) &&
     typeof policy.quote === "string" &&
-    Array.isArray(policy.citations) &&
-    policy.citations.length === 5 &&
+    Array.isArray(rawCitations) &&
+    citations.length >= POLICY_FACTS.length &&
+    citationCardinality &&
     new Set(
-      policy.citations.map((citation) =>
+      citations.map((citation: unknown) =>
         typeof citation === "object" && citation !== null
           // SAFETY: The object/null check establishes a record used only to read an unknown fact.
           ? String((citation as Record<string, unknown>).fact)
           : "",
       ),
-    ).size === 5 &&
-    policy.citations.every((citation) => {
+    ).size === POLICY_FACTS.length &&
+    citations.every((citation: unknown) => {
       if (typeof citation !== "object" || citation === null) return false;
       // SAFETY: The object/null check above establishes a record for validation.
       const entry = citation as Record<string, unknown>;

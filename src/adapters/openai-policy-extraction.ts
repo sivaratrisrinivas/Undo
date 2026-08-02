@@ -13,7 +13,7 @@ function extractionFrom(value: unknown, evidence: ReadonlyArray<EvidenceSnapshot
   if (typeof model !== "string" || model.trim() === "") {
     throw new Error("Extraction response did not identify the model");
   }
-  return { policies: parseExtractedPolicies(value, evidence), model };
+  return { policies: parseExtractedPolicies(value, evidence, { normalized: true }), model };
 }
 
 /** Creates the browser half of the server-only OpenAI structured extraction boundary. */

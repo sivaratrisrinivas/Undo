@@ -34,16 +34,23 @@ describe("browser evidence repository", () => {
         supplementaryRemedies: [],
         quote: "Policy text",
         citations: [
-          "remedy",
-          "window",
-          "product_condition",
-          "return_transport",
-          "buyer_paid_fees",
-        ].map((fact) => ({
-          fact: fact as PolicyAssessment["citations"][number]["fact"],
-          quote: "Policy text",
-          sourceUrl: "https://merchant.example/policy",
-        })),
+          ...[
+            "remedy",
+            "window",
+            "product_condition",
+            "return_transport",
+            "buyer_paid_fees",
+          ].map((fact) => ({
+            fact: fact as PolicyAssessment["citations"][number]["fact"],
+            quote: "Policy text",
+            sourceUrl: "https://merchant.example/policy",
+          })),
+          {
+            fact: "remedy",
+            quote: "Policy text",
+            sourceUrl: "https://merchant.example/policy",
+          },
+        ],
       },
     } satisfies EvidenceReview;
     const cache = { snapshots: [], reviews: [review] } satisfies ReviewedEvidenceCache;
@@ -55,6 +62,20 @@ describe("browser evidence repository", () => {
     expect(await reloaded.findReview(review.fingerprint)).toEqual(review);
     expect(await reloaded.findReview("sha256:changed-content")).toBeUndefined();
     expect(await reloaded.loadCache({} as never)).toEqual(cache);
+
+    const knownFieldDuplicate = {
+      ...review,
+      fingerprint: "sha256:known-field-duplicate",
+      policy: {
+        ...review.policy,
+        citations: [
+          ...review.policy.citations,
+          { fact: "window" as const, quote: "Policy text", sourceUrl: "https://merchant.example/policy" },
+        ],
+      },
+    } satisfies EvidenceReview;
+    localStorage.setItem("undo.evidence-reviews.v1", JSON.stringify([knownFieldDuplicate]));
+    expect(await reloaded.findReview(knownFieldDuplicate.fingerprint)).toBeUndefined();
   });
 
   it("rejects cached text that no longer matches its fingerprint", async () => {

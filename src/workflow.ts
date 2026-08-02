@@ -520,26 +520,36 @@ export class AssessmentWorkflow {
   ): boolean {
     const hasRequiredCitations = POLICY_FACTS.every((fact) => {
       const citations = policy.citations.filter((citation) => citation.fact === fact);
-      const citation = citations[0];
+      const allowsMultipleCitations =
+        fact === "remedy" ||
+        (fact === "window" && policy.remedyWindow.kind === "unclear") ||
+        (fact === "product_condition" && policy.productCondition === "unclear") ||
+        (fact === "return_transport" && policy.returnTransport === "unclear") ||
+        (fact === "buyer_paid_fees" && policy.reversalCost.kind === "unclear");
       return (
-        citations.length === 1 &&
-        citation !== undefined &&
-        citation.sourceUrl === snapshot.sourceUrl &&
-        citation.quote.trim() !== "" &&
-        snapshot.exactText.includes(citation.quote)
+        (allowsMultipleCitations ? citations.length > 0 : citations.length === 1) &&
+        citations.every((citation) =>
+          citation.sourceUrl === snapshot.sourceUrl &&
+          citation.quote.trim() !== "" &&
+          snapshot.exactText.includes(citation.quote),
+        )
       );
     });
     const hasExactCitation = (citation: { readonly quote: string; readonly sourceUrl: string }) =>
       citation.sourceUrl === snapshot.sourceUrl &&
       citation.quote.trim() !== "" &&
       snapshot.exactText.includes(citation.quote);
-    const remedyCitation = policy.citations.find((citation) => citation.fact === "remedy");
+    const hasPrimaryRemedyCitation = policy.citations.some(
+      (citation) => citation.fact === "remedy" && citation.quote === policy.quote,
+    );
     const hasValidWindow =
       policy.remedyWindow.kind === "unclear" || policy.remedyWindow.days > 0;
     return (
       hasRequiredCitations &&
-      remedyCitation !== undefined &&
-      policy.quote === remedyCitation.quote &&
+      policy.citations.every((citation) =>
+        POLICY_FACTS.includes(citation.fact) && hasExactCitation(citation),
+      ) &&
+      hasPrimaryRemedyCitation &&
       hasValidWindow &&
       policy.materialConditions.every((condition) => hasExactCitation(condition.citation)) &&
       policy.supplementaryRemedies.every((remedy) => hasExactCitation(remedy.citation))

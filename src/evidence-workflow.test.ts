@@ -415,6 +415,76 @@ describe("Policy Evidence workflow", () => {
     }
   });
 
+  it("preserves multiple exact citations for a composite remedy during review", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const firstPolicy = policies[0];
+    const firstCitation = firstPolicy?.citations[0];
+    if (firstPolicy === undefined || firstCitation === undefined) throw new Error("Missing fixture");
+    const policiesWithSeparateRemedyCitations = policies.map((policy, index) =>
+      index === 0
+        ? {
+            ...policy,
+            citations: [
+              { ...firstCitation, quote: "within 7 days of delivery.", fact: "remedy" as const },
+              ...policy.citations.slice(1),
+              { ...firstCitation, fact: "remedy" as const },
+            ],
+          }
+        : policy,
+    );
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => {
+        const policy = policiesWithSeparateRemedyCitations[index];
+        if (policy === undefined) throw new Error("Missing fixture");
+        return {
+          fingerprint: snapshot.fingerprint,
+          approvedAt: "2026-08-01T12:00:00.000Z",
+          policy,
+        };
+      },
+    );
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policiesWithSeparateRemedyCitations, reviews),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result._tag).toBe("ok");
+    if (result._tag === "ok") {
+      expect(result.value.offers[0]?.policy.citations.filter((citation) => citation.fact === "remedy")).toHaveLength(2);
+      expect(result.value.offers[0]?.policy.quote).toBe(firstCitation.quote);
+    }
+  });
+
+  it("rejects duplicate citations for a known non-remedy field", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));
+    const firstPolicy = policies[0];
+    const firstCitation = firstPolicy?.citations[1];
+    if (firstPolicy === undefined || firstCitation === undefined) throw new Error("Missing fixture");
+    const policiesWithDuplicateWindow = policies.map((policy, index) =>
+      index === 0
+        ? { ...policy, citations: [...policy.citations, { ...firstCitation, fact: "window" as const }] }
+        : policy,
+    );
+    const reviews = snapshots.map(
+      (snapshot, index): EvidenceReview => {
+        const policy = policiesWithDuplicateWindow[index];
+        if (policy === undefined) throw new Error("Missing fixture");
+        return { fingerprint: snapshot.fingerprint, approvedAt: "2026-08-01T12:00:00.000Z", policy };
+      },
+    );
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, policiesWithDuplicateWindow, reviews),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: { message: "Policy Evidence changed and requires human review", reason: "blocked_by_policy" },
+    });
+  });
+
   it("refuses human approval when the supporting quote is not exact snapshot text", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));

@@ -48,7 +48,7 @@ describe("OpenAI policy extraction server boundary", () => {
         {
           offerId: "headphone-zone",
           changeOfMind: "money_back",
-          defect: "none",
+          defect: "replacement",
           remedyWindow: {
             kind: "known",
             days: 7,
@@ -66,11 +66,27 @@ describe("OpenAI policy extraction server boundary", () => {
               },
             },
           ],
-          supplementaryRemedies: [],
+          supplementaryRemedies: [
+            {
+              kind: "replacement",
+              detail: "Defect replacement is separately stated.",
+              citation: { quote: "Eligible products may be returned for a refund" },
+            },
+            {
+              kind: "replacement",
+              detail: "A second defect case is separately stated.",
+              citation: { quote: "when sealed and unopened" },
+            },
+          ],
+          primaryRemedyQuote: "Eligible products may be returned for a refund",
           citations: [
             {
               fact: "remedy",
               quote: "Eligible products may be returned for a refund",
+            },
+            {
+              fact: "remedy",
+              quote: "when sealed and unopened",
             },
             {
               fact: "window",
@@ -195,6 +211,7 @@ describe("OpenAI policy extraction server boundary", () => {
                         reversalCost: { kind: "unclear", amountInr: null },
                         materialConditions: [],
                         supplementaryRemedies: [],
+                        primaryRemedyQuote: "This wording was invented",
                         citations: [
                           "remedy",
                           "window",

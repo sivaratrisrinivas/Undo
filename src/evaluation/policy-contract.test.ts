@@ -46,6 +46,63 @@ describe("15-document policy extraction contract", () => {
     });
   });
 
+  it("scores every citation when a field needs multiple exact excerpts", () => {
+    const entry = FROZEN_POLICY_ANSWER_KEY[0];
+    if (entry === undefined) throw new Error("Missing answer-key fixture");
+    const firstCitation = entry.expected.citations[0];
+    if (firstCitation === undefined) throw new Error("Missing citation fixture");
+    const expected = {
+      ...entry.expected,
+      citations: [...entry.expected.citations, { ...firstCitation, fact: "remedy" as const }],
+    };
+    const answerKey = [{ ...entry, expected }];
+    const matching = [{ documentId: entry.documentId, policy: expected }];
+    const missingOne = [{
+      documentId: entry.documentId,
+      policy: entry.expected,
+    }];
+
+    expect(scorePolicyExtractionContract(answerKey, matching)).toMatchObject({
+      passedFields: 5,
+      totalFields: 5,
+      accuracy: 1,
+    });
+    expect(scorePolicyExtractionContract(answerKey, missingOne).passedFields).toBe(4);
+  });
+
+  it("fails the remedy field when a material condition is unsupported", () => {
+    const answerKeyBaseline = FROZEN_POLICY_ANSWER_KEY.map((entry) => ({
+      documentId: entry.documentId,
+      policy: entry.expected,
+    }));
+    const first = answerKeyBaseline[0];
+    if (first === undefined) throw new Error("Missing answer-key fixture");
+    const extractions = answerKeyBaseline.map((extraction, index) =>
+      index === 0
+        ? {
+            ...extraction,
+            policy: {
+              ...extraction.policy,
+              materialConditions: [
+                {
+                  detail: "Unsupported condition",
+                  citation: {
+                    quote: "unsupported condition",
+                    sourceUrl: extraction.policy.citations[0]?.sourceUrl ?? "",
+                  },
+                },
+              ],
+            },
+          }
+        : extraction,
+    );
+
+    expect(scorePolicyExtractionContract(FROZEN_POLICY_ANSWER_KEY, extractions)).toMatchObject({
+      passedFields: 74,
+      meetsAccuracyThreshold: false,
+    });
+  });
+
   it("fails unsupported return claims and incorrect abstention", () => {
     const extractions = FROZEN_POLICY_ANSWER_KEY.map((entry) => ({
       documentId: entry.documentId,
