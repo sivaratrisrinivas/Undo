@@ -11,6 +11,7 @@
     "vite.config.ts",
     "src/domain.ts",
     "src/adapters/senso-evidence-server.ts",
-    "src/adapters/openai-policy-extraction-server.ts"
+    "src/adapters/openai-policy-extraction-server.ts",
+    "src/adapters/prava-shopping-server.ts"
   ]
 }

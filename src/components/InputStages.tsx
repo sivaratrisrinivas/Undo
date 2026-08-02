@@ -59,9 +59,9 @@ export function ConstraintsStage(props: {
     <div className="stage-card compact">
       <p className="step-kicker">Step 2 of 7</p>
       <h2>Set your boundaries</h2>
-      <p className="stage-copy">Quotes use a masked destination reference. No full address enters the assessment.</p>
+      <p className="stage-copy">Quotes use Prava's default saved destination. Choosing Compare offers confirms the listed sellers and fixed HD 560S variant so Prava may open live quote sessions. No full address enters Undo.</p>
       <div className="form-grid">
-        <label className="field"><span>Delivery Destination</span><select value={props.destinationReference} onChange={(event) => props.onDestinationChange(event.target.value)}><option value="Bengaluru · destination-ref-01">Bengaluru · saved destination •01</option><option value="Hyderabad · destination-ref-02">Hyderabad · saved destination •02</option></select></label>
+        <label className="field"><span>Delivery Destination</span><select value={props.destinationReference} onChange={(event) => props.onDestinationChange(event.target.value)}><option value="destination-ref-prava-default">Prava default saved destination</option></select></label>
         <label className="field">
           <span>Premium Limit (₹)</span>
           <input aria-label="Premium Limit (₹)" min="0" onChange={(event) => props.onPremiumLimitChange(event.target.value)} step="1" type="number" value={props.premiumLimit} />

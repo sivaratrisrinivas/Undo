@@ -8,6 +8,10 @@ import {
   openAiApiKeyFrom,
   parsePolicyEvidenceInput,
 } from "./src/adapters/openai-policy-extraction-server.ts";
+import {
+  parsePravaQuoteRequest,
+  quoteOffersWithPrava,
+} from "./src/adapters/prava-shopping-server.ts";
 import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_PRODUCT, type Product } from "./src/domain.ts";
 
 function boundaryRecord(value: unknown): Record<string, unknown> {
@@ -142,10 +146,65 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
   };
 }
 
+function pravaCheckoutQuotesPlugin(): Plugin {
+  return {
+    name: "undo-prava-checkout-quotes",
+    configureServer(server) {
+      server.middlewares.use("/api/checkout-quotes", (request, response, next) => {
+        if (request.method !== "POST") {
+          next();
+          return;
+        }
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => { body += chunk; });
+        request.on("end", () => {
+          const handleRequest = async () => {
+            if (body.length > 100_000) {
+              response.statusCode = 413;
+              response.end(JSON.stringify({ error: "Request is too large" }));
+              return;
+            }
+            let input;
+            try {
+              const payload: unknown = JSON.parse(body);
+              input = parsePravaQuoteRequest(payload);
+            } catch (cause: unknown) {
+              response.statusCode = cause instanceof SyntaxError ? 400 : 422;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: "Invalid Prava quote request" }));
+              return;
+            }
+            const result = await quoteOffersWithPrava(input.offers, input.destinationReference);
+            response.setHeader("Content-Type", "application/json");
+            if (result._tag === "err") {
+              response.statusCode = 503;
+              response.end(JSON.stringify({ error: "Checkout quotes unavailable" }));
+              return;
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify({ quotes: result.value }));
+          };
+          handleRequest().catch(() => {
+            response.statusCode = 503;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ error: "Checkout quotes unavailable" }));
+          });
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), sensoEvidencePlugin(env), openAiPolicyExtractionPlugin(env)],
+    plugins: [
+      react(),
+      sensoEvidencePlugin(env),
+      openAiPolicyExtractionPlugin(env),
+      pravaCheckoutQuotesPlugin(),
+    ],
     test: {
       environment: "jsdom",
       setupFiles: ["./src/test-setup.ts"],

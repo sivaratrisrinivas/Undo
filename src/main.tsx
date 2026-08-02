@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserEvidenceRepository } from "./adapters/browser-evidence-repository";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { createOpenAiPolicyExtractionAdapter } from "./adapters/openai-policy-extraction";
+import { createPravaShoppingAdapter } from "./adapters/prava-shopping";
 import { createSensoEvidenceAdapter } from "./adapters/senso-evidence";
 import { App } from "./App";
 import { officialEvidenceAppliesToSupportedProduct, type EvidenceSnapshot, type Product } from "./domain";
@@ -27,6 +28,7 @@ const adapters =
         },
         senso: createSensoEvidenceAdapter(),
         openAi: createOpenAiPolicyExtractionAdapter(),
+        prava: createPravaShoppingAdapter(),
         evidence: createBrowserEvidenceRepository(localStorage),
       };
 

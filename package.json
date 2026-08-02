@@ -9,11 +9,13 @@
     "test": "vitest run",
     "test:policy-contract": "vitest run src/evaluation/policy-contract.test.ts",
     "test:senso-live": "RUN_SENSO_LIVE_TESTS=1 vitest run src/adapters/senso-evidence-live.test.ts",
+    "test:prava-live": "RUN_PRAVA_LIVE_TESTS=1 vitest run src/adapters/prava-shopping-live.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint ."
   },
   "dependencies": {
+    "@prava-sdk/cli": "3.1.0",
     "react": "latest",
     "react-dom": "latest"
   },

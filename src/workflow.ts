@@ -67,7 +67,7 @@ export type AdapterResult<T> =
 export type AssessmentFailure =
   | {
       readonly _tag: "AssessmentUnavailable";
-      readonly message: "Policy check unavailable";
+      readonly message: "Policy check unavailable" | "Checkout quote unavailable";
       readonly cause: unknown;
     }
   | {
@@ -253,7 +253,7 @@ export class AssessmentWorkflow {
         _tag: "err",
         error: {
           _tag: "AssessmentUnavailable",
-          message: "Policy check unavailable",
+          message: "Checkout quote unavailable",
           cause: quotesResult.error,
         },
       };
@@ -613,7 +613,7 @@ export class AssessmentWorkflow {
       authorizationState: "not_requested",
       assumptions: [
         "Each curated Offer was checked against the supported Product identity before any Purchase Authorization.",
-        "Fixture evidence and quotes are deterministic demo substitutes, not live merchant data.",
+        "Checkout totals were supplied by the configured Prava boundary for the selected destination.",
         "No checkout was submitted because the buyer declined.",
       ],
       versions: {

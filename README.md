@@ -9,6 +9,10 @@ live item total, delivery, taxes, applied discounts, advertised-but-unapplied di
 availability, and Confirmed Checkout Total. Only equivalent Purchase Available totals can set the Premium
 Limit baseline; advertised value, cashback, and rewards never reduce it.
 
+The normal local flow uses the official `@prava-sdk/cli` shopping interface. Product and quote calls run
+server-side through the linked Prava agent identity; browser code receives only parsed catalog and quote
+fields. Flipkart remains visible but unavailable when Prava has no orderable matching listing.
+
 Undo retrieves official Policy Evidence through Senso, extracts the five policy fields through the
 server-only OpenAI Responses API, validates exact citations, and applies deterministic eligibility and
 Remedy Ranking rules. Change-of-mind remedies determine reversibility; defect remedies, warranties,
@@ -31,11 +35,27 @@ SENSO_CONCEPT_KART_KB_NODE_IDS=uuid-3,uuid-4
 SENSO_FLIPKART_KB_NODE_IDS=uuid-5,uuid-6
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_POLICY_MODEL=gpt-5.6-sol
+PRAVA_SECRET_KEY=sk_test_your_key
+PRAVA_PUBLISHABLE_KEY=pk_test_your_key
+PRAVA_API_BASE_URL=https://sandbox.api.prava.space
 ```
 
 Each Senso variable lists the official KB node IDs for that Offer. The server rejects missing,
 unfinished, malformed, empty, or incorrectly scoped documents. Buyer identity, address, payment data,
 and one-time credentials are not sent to Senso or OpenAI.
+
+The three `PRAVA_*` API values are reserved for Prava's app-owned payment-session flow; issue #5's
+shopping quotes use Prava Pay's linked agent identity because the secret-key REST API does not expose
+shopping endpoints. Link this checkout server once, then add a default address and phone in Prava Pay:
+
+```sh
+npx prava setup --name "Undo local app" --platform codex
+npx prava setup poll
+npx prava status
+```
+
+Prava stores the agent key in `~/.prava/agent.json` with owner-only permissions. Undo passes only the
+opaque default-destination selection; Prava hydrates the saved address privately when opening a quote.
 
 ## Run and verify
 
@@ -45,13 +65,15 @@ VITE_EVIDENCE_MODE=fake npm run dev
 npm test
 npm run test:policy-contract
 npm run test:senso-live    # opt-in; requires .env.local
+npm run test:prava-live    # opt-in; requires linked agent + default address/phone
 npm run lint
 npm run typecheck
 npm run build
 ```
 
-The development server provides `/api/policy-evidence` and `/api/policy-extraction` as server-only
-routes. A production host must provide equivalent routes.
+The development server provides `/api/policy-evidence`, `/api/policy-extraction`, and
+`/api/checkout-quotes` as server-only routes. A production host must provide equivalent routes and a
+linked Prava agent identity.
 
 The official 15-document policy contract has completed human review, so the production release gate is
 enabled. Synthetic fixtures remain regression tests and do not replace that review.

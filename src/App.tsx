@@ -40,7 +40,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
   const [productName, setProductName] = useState("");
   const [product, setProduct] = useState<Product>();
   const [premiumLimit, setPremiumLimit] = useState("2000");
-  const [destinationReference, setDestinationReference] = useState("Bengaluru · destination-ref-01");
+  const [destinationReference, setDestinationReference] = useState("destination-ref-prava-default");
   const [assessment, setAssessment] = useState<ReversibilityAssessment>();
   const [selectedOffer, setSelectedOffer] = useState<AssessedOffer>();
   const [record, setRecord] = useState<UndoRecord>();

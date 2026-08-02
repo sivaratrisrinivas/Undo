@@ -1,0 +1,122 @@
+import { describe, expect, it } from "vitest";
+
+import { SUPPORTED_OFFERS } from "../domain";
+import {
+  parsePravaQuoteRequest,
+  quoteOffersWithPrava,
+  type PravaCommandRunner,
+} from "./prava-shopping-server";
+
+function jsonOutput(value: unknown) {
+  return { exitCode: 0, stdout: JSON.stringify(value), stderr: "" };
+}
+
+describe("Prava shopping server boundary", () => {
+  it("verifies exact catalog variants and returns reconciled INR checkout totals", async () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const runner: PravaCommandRunner = (args) => {
+      commands.push(args);
+      const merchantIndex = args.indexOf("--merchant") + 1;
+      const merchant = args[merchantIndex];
+      if (args[1] === "product") {
+        const headphoneZone = merchant === "headphonezone.in";
+        return Promise.resolve(jsonOutput({
+          product: {
+            id: headphoneZone
+              ? "gid://shopify/Product/4807978942527"
+              : "gid://shopify/Product/8076382404682",
+            merchant,
+            description: headphoneZone
+              ? "Sennheiser HD 560S Black BOX CONTENTS standard cable 2 Year Warranty warranty in India"
+              : "Sennheiser HD 560S Black detachable cable with 6.3mm adapter",
+            variants: [{
+              id: headphoneZone
+                ? "gid://shopify/ProductVariant/33115065450559"
+                : "gid://shopify/ProductVariant/43111211499594",
+              merchantDomain: merchant,
+              available: true,
+              currency: "INR",
+              priceAmount: headphoneZone ? 1_299_000 : 1_398_900,
+            }],
+          },
+        }));
+      }
+      return Promise.resolve(jsonOutput({
+        merchant,
+        checkout_session_id: `ches_${merchant}`,
+        expires_at: "2026-08-02T18:00:00.000Z",
+        final_price: { amount: merchant === "headphonezone.in" ? "13290.00" : "13989.00", currency: "INR" },
+        price_breakdown: {
+          subtotal_cents: merchant === "headphonezone.in" ? 1_299_000 : 1_398_900,
+          shipping_cents: merchant === "headphonezone.in" ? 40_000 : 0,
+          tax_cents: 0,
+        },
+      }));
+    };
+
+    const result = await quoteOffersWithPrava(SUPPORTED_OFFERS, "addr_home1", runner);
+
+    expect(result).toMatchObject({
+      _tag: "ok",
+      value: [
+        {
+          offerId: "headphone-zone",
+          itemTotalInr: 12_990,
+          deliveryInr: 400,
+          taxesInr: 0,
+          appliedDiscounts: [{ amountInr: 100 }],
+          totalInr: 13_290,
+          purchaseAvailable: true,
+        },
+        {
+          offerId: "concept-kart",
+          totalInr: 13_989,
+          purchaseAvailable: true,
+        },
+        {
+          offerId: "flipkart",
+          purchaseAvailable: false,
+        },
+      ],
+    });
+    const quoteCommands = commands.filter((args) => args[1] === "quote");
+    expect(quoteCommands).toHaveLength(2);
+    expect(quoteCommands.every((args) => args.includes("--yes"))).toBe(true);
+    expect(quoteCommands.every((args) => args.includes("addr_home1"))).toBe(true);
+  });
+
+  it("omits an address id when the buyer confirms the Prava default destination", async () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const runner: PravaCommandRunner = (args) => {
+      commands.push(args);
+      if (args[1] === "product") {
+        return Promise.resolve(jsonOutput({ product: { id: "changed", merchant: "headphonezone.in" } }));
+      }
+      throw new Error("Quote must not run for an unverified product");
+    };
+
+    const result = await quoteOffersWithPrava(
+      [SUPPORTED_OFFERS[0]].filter((offer) => offer !== undefined),
+      "destination-ref-prava-default",
+      runner,
+    );
+
+    expect(result).toMatchObject({ _tag: "ok", value: [{ purchaseAvailable: false }] });
+    expect(commands).toHaveLength(1);
+  });
+
+  it("rejects browser requests that alter curated offers or send personal destinations", () => {
+    expect(() => parsePravaQuoteRequest({
+      offers: SUPPORTED_OFFERS,
+      destinationReference: "addr_home1",
+    })).not.toThrow();
+    expect(() => parsePravaQuoteRequest({
+      offers: SUPPORTED_OFFERS,
+      destinationReference: "123 Example Street",
+    })).toThrow("Invalid Prava quote request");
+    expect(() => parsePravaQuoteRequest({
+      offers: [{ ...SUPPORTED_OFFERS[0], seller: "changed" }, ...SUPPORTED_OFFERS.slice(1)],
+      destinationReference: "addr_home1",
+    })).toThrow("Invalid Prava quote request");
+  });
+});

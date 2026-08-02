@@ -50,7 +50,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByText("Buyer declined")).toBeVisible();
     expect(screen.getByText("undo-demo-001")).toBeVisible();
     expect(screen.getByText("policy-schema/1.0")).toBeVisible();
-    expect(screen.getByText(/destination-ref-01/)).toBeVisible();
+    expect(screen.getByText(/destination-ref-prava-default/)).toBeVisible();
     expect(screen.getByText("3 snapshots retained")).toBeVisible();
     expect(screen.getByText("Not requested")).toBeVisible();
     expect(screen.queryByText(/card number|cvv|full address/i)).not.toBeInTheDocument();
@@ -143,7 +143,7 @@ describe("guided Reversibility Assessment", () => {
     await user.click(screen.getByRole("button", { name: "Start assessment" }));
     await user.click(screen.getByRole("button", { name: "Compare offers" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Policy check unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Checkout quote unavailable");
     expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
   });
 
