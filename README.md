@@ -19,6 +19,15 @@ Remedy Ranking rules. Change-of-mind remedies determine reversibility; defect re
 cancellation, and refund timing are displayed separately. Missing, conflicting, stale, changed, or
 uncited evidence blocks automatic purchase. Undo never guarantees a merchant outcome.
 
+Eligible Offers are ranked lexicographically by Trial Permission, money back over store credit,
+longer Remedy Window, doorstep pickup over self-shipping, lower evidenced Reversal Cost, and finally
+lower Confirmed Checkout Total. The comparison shows the exact cited clauses, Material Conditions,
+evidence freshness and cache state, premium over the cheapest Purchase Available Equivalent Offer,
+transport, costs, and uncertainty. Perfect ties require buyer selection; a Buyer Override can select
+another Offer only while it continues to satisfy every evidence, equivalence, availability, cost, and
+Premium Limit rule. The frozen 30-scenario contract verifies these boundaries with a 30/30 release
+target.
+
 ## Local setup
 
 ```sh
