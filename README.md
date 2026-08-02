@@ -39,8 +39,14 @@ maximum total. It expires after 10 minutes, accepts a lower fresh total but neve
 be claimed for only one Prava submission. A changed Offer, Product identity, seller, destination,
 Premium Limit, policy input, quantity, or payment method atomically invalidates it. Authorization state
 is retained in browser storage behind a per-authorization Web Lock so reloads, multiple tabs, and
-concurrent claims cannot turn one approval into multiple submissions. Checkout submission itself is
-the next implementation boundary and is not performed by the current application.
+concurrent claims cannot turn one approval into multiple submissions. Checkout consumes the authorization
+before making one Prava attempt; the server also requires an opaque, one-time grant bound to the exact
+authorized request and retains a consumed-ID replay tombstone. Undo never retries automatically. Only successful payment plus a merchant
+order identifier becomes a Completed Purchase; missing confirmation becomes `outcome_unknown`, with a clear
+warning that an order may exist. The final Undo Record retains the approved maximum, authorization state,
+Prava status, evidence, recommendation, assumptions, and version identifiers without payment credentials or
+personal delivery data. The browser repository retains records so completed outcomes remain auditable
+after reload; a saved Completed Purchase may later appear only as a clearly historical fallback.
 
 ## Local setup
 
@@ -61,6 +67,10 @@ OPENAI_POLICY_MODEL=gpt-5.6-sol
 PRAVA_SECRET_KEY=sk_test_your_key
 PRAVA_PUBLISHABLE_KEY=pk_test_your_key
 PRAVA_API_BASE_URL=https://sandbox.api.prava.space
+PRAVA_SANDBOX_TOKEN=one_time_network_token_from_prava
+PRAVA_SANDBOX_CRYPTOGRAM=one_time_dynamic_cryptogram_from_prava
+PRAVA_SANDBOX_EXPIRY_MONTH=12
+PRAVA_SANDBOX_EXPIRY_YEAR=2028
 ```
 
 Each Senso variable lists the official KB node IDs for that Offer. The server rejects missing,
@@ -79,6 +89,12 @@ npx prava status
 
 Prava stores the agent key in `~/.prava/agent.json` with owner-only permissions. Undo passes only the
 opaque default-destination selection; Prava hydrates the saved address privately when opening a quote.
+For an actual sandbox checkout, obtain the four `PRAVA_SANDBOX_*` values through Prava's approved
+`sessions create` → buyer approval → `sessions poll` flow for the exact quoted total. They remain
+server-only, are atomically consumed before one `shop checkout --yes --json` call, and are never returned to
+the browser, written to the Undo Record, or logged by Undo. The server also rejects a repeated authorization
+identifier. Do not reuse credentials or authorization for a retry; start again with a fresh quote, Approval
+Summary, warning acknowledgements, Purchase Authorization, and one-time credential.
 
 ## Run and verify
 
@@ -89,6 +105,7 @@ npm test
 npm run test:policy-contract
 npm run test:ranking-contract
 npx vitest run src/purchase-authorization.test.ts src/adapters/browser-purchase-authorization-repository.test.ts
+npx vitest run src/checkout-workflow.test.ts src/adapters/browser-undo-record-repository.test.ts
 npx playwright install chromium # first browser run on a new machine
 npm run test:browser        # real Chromium; starts the fake-adapter app automatically
 npm run test:senso-live    # opt-in; requires .env.local
@@ -106,9 +123,9 @@ Headphone Zone catalog variant, opened a destination-specific binding quote, rec
 shipping, tax, applied discount, and final INR total, and kept the unsupported Flipkart seller
 unavailable. The verification stops after quoting; it does not submit checkout or create a charge.
 
-The development server provides `/api/policy-evidence`, `/api/policy-extraction`, and
-`/api/checkout-quotes` as server-only routes. A production host must provide equivalent routes and a
-linked Prava agent identity.
+The development server provides `/api/policy-evidence`, `/api/policy-extraction`,
+`/api/checkout-quotes`, and `/api/checkout` as server-only routes. A production host must provide
+equivalent routes and a linked Prava agent identity.
 
 The official 15-document policy contract has completed human review, so the production release gate is
 enabled. Synthetic fixtures remain regression tests and do not replace that review.
@@ -120,8 +137,16 @@ separate workflow instances, and a real Chromium runtime. The contract suite cov
 warning acknowledgements, exact 10-minute expiry, lower and higher totals, attempted reuse, unsupported
 payment methods, changed Product, merchant, seller, destination, quantity, Premium Limit, selected Offer,
 and material policy inputs. The real-browser path confirms that the approval action remains disabled
-until every warning is acknowledged, creates one visible active authorization, and does not call Prava
-checkout.
+until every warning is acknowledged and creates one visible active authorization.
+
+### Checkout and Undo Record verification
+
+Issue #8 adds workflow coverage for confirmed success, successful payment without an order identifier,
+confirmed failure, timeout after submission, concurrent duplicate prevention, and a clearly historical
+Previous Sandbox Purchase. Server-boundary tests re-quote the authorized Offer, stop before charging when
+the total rises above the approved maximum, and treat unreadable or timed-out post-submission responses as
+unknown. The real Chromium path submits once through the deterministic Prava adapter and renders the final
+Completed Purchase record without browser console or page errors.
 
 ## Reference docs
 

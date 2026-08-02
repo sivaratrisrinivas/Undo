@@ -163,6 +163,7 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }),
     },
     prava: {
+      registerCheckout: () => Promise.resolve("registered"),
       quoteOffers: (_offers, destinationReference) =>
         Promise.resolve({
           _tag: "ok",
@@ -175,8 +176,11 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
         }),
       submitCheckout: () =>
         Promise.resolve({
-          _tag: "err",
-          error: { _tag: "DependencyUnavailable", dependency: "prava", cause: "not used" },
+          _tag: "submitted",
+          paymentStatus: "unknown",
+          merchantOrderIdentifier: null,
+          confirmedTotalInr: null,
+          failureReason: "not used",
         }),
     },
     evidence: {
@@ -186,6 +190,7 @@ function adaptersFor(scenario: FrozenRankingScenario): AssessmentAdapters {
       saveCache: () => Promise.resolve(),
     },
     authorization: createInMemoryPurchaseAuthorizationRepository(),
+    records: { save: () => Promise.resolve("saved"), find: () => Promise.resolve(undefined), latestCompletedPurchase: () => Promise.resolve(undefined) },
     now: () => NOW,
     nextAuthorizationId: () => "frozen-ranking-authorization",
     nextRecordId: () => "frozen-ranking-record",

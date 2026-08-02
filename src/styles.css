@@ -94,7 +94,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .override-note { padding: .8rem 1rem; background: var(--warning); border-left: 4px solid var(--warning-border); font-weight: 700; }
 .merchant { font-size: 1.05rem; font-weight: 850; }
 .cell-label { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
-.evidence-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 2rem 0; }
+.evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 2rem 0; }
 .evidence-card { padding: 1.25rem; border: 1px solid var(--line); background: var(--surface-raised); }
 .evidence-header { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
 .evidence-header span { color: var(--text-current); font-size: .7rem; font-weight: 750; }
@@ -103,7 +103,7 @@ dl { margin: 0; }
 .evidence-card dl div { margin-top: .75rem; }
 dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
 dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
-.evidence-card a { display: inline-block; margin-top: 1rem; color: var(--blue); font-weight: 750; }
+.evidence-card a { display: inline-block; margin-top: 1rem; color: var(--blue); font-weight: 750; overflow-wrap: anywhere; }
 .evidence-facts { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .evidence-fact { margin-top: 1rem; }
 .evidence-fact strong { text-transform: capitalize; }

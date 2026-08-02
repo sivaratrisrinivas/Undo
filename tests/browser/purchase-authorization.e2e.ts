@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("strict Purchase Authorization works in Chromium", async ({ page }) => {
+test("one Purchase Authorization produces one completed sandbox checkout in Chromium", async ({ page }) => {
   const consoleProblems: Array<string> = [];
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
@@ -27,8 +27,15 @@ test("strict Purchase Authorization works in Chromium", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Checkout decision" })).toBeVisible();
   await expect(page.getByText(/Active/)).toBeVisible();
-  await expect(page.getByText(/No checkout has been submitted/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Authorize sandbox checkout" })).toBeDisabled();
+  await expect(page.getByText(/Submit makes exactly one Prava attempt/)).toBeVisible();
+  const submit = page.getByRole("button", { name: "Submit once through Prava" });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(page.getByRole("heading", { name: "Undo Record" })).toBeVisible();
+  await expect(page.getByText("Purchased")).toBeVisible();
+  await expect(page.getByText("sandbox-order-demo-001")).toBeVisible();
+  await expect(page.getByText("Used for one checkout attempt")).toBeVisible();
+  await page.screenshot({ path: "/tmp/undo-completed-purchase-desktop.png", fullPage: true });
   expect(consoleProblems).toEqual([]);
 });
 

@@ -87,6 +87,10 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     setLoading(false);
     if (result._tag === "err") {
       if (result.error._tag === "NoEligibleOffer" && result.error.record !== undefined) {
+        if (await adapters.records.save(result.error.record) === "unavailable") {
+          setError("Unable to save the Undo Record safely.");
+          return;
+        }
         setRecord(result.error.record);
         if (result.error.reviewCandidates !== undefined) {
           setReviewCandidates(result.error.reviewCandidates);
@@ -170,10 +174,48 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
     }
     const result = await workflow.decline(assessment, selectedOffer, authorization);
     if (result._tag === "err") {
+      if (result.reason === "record_unavailable") {
+        setError("The decline was completed, but Undo could not persist this record.");
+        setAuthorization(undefined);
+        setRecord(result.record);
+        setStage("record");
+        return;
+      }
       setError("Unable to save the decline safely. No checkout was submitted.");
       return;
     }
     setError(undefined);
+    setRecord(result.value);
+    setStage("record");
+  }
+
+  async function submitCheckout() {
+    if (assessment === undefined || selectedOffer === undefined || authorization === undefined) {
+      return;
+    }
+    setError(undefined);
+    setLoading(true);
+    const result = await workflow.checkout({
+      authorization,
+      assessment,
+      selectedOffer,
+      quote: selectedOffer.offer.checkoutQuote,
+      quantity: 1,
+      paymentMethod: "prava_one_time_prepaid",
+    });
+    setLoading(false);
+    if (result._tag === "err") {
+      if (result.reason === "record_unavailable") {
+        setError("Checkout may have completed, but Undo could not persist this record. Do not retry.");
+        setAuthorization(undefined);
+        setRecord(result.record);
+        setStage("record");
+        return;
+      }
+      setError("Checkout was not submitted because the Purchase Authorization is no longer valid. Start again for a fresh quote and approval.");
+      return;
+    }
+    setAuthorization(undefined);
     setRecord(result.value);
     setStage("record");
   }
@@ -207,8 +249,8 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
           {stage === "review" && <EvidenceReviewStage candidates={reviewCandidates} loading={loading} onApprove={() => void approveEvidence()} />}
           {stage === "evidence" && assessment !== undefined && <EvidenceStage assessment={assessment} onContinue={reviewApprovalSummary} />}
           {stage === "approval" && approvalSummary !== undefined && selectedOffer !== undefined && <ApprovalStage summary={approvalSummary} selection={selectedOffer.selection} purchaseEnabled={adapters.policyContract.purchaseEnabled()} acknowledgedWarnings={acknowledgedWarnings} onAcknowledgementChange={(warningId, checked) => setAcknowledgedWarnings((current) => { const next = new Set(current); if (checked) next.add(warningId); else next.delete(warningId); return next; })} onAuthorize={() => void authorizePurchase()} />}
-          {stage === "checkout" && authorization !== undefined && <CheckoutStage authorization={authorization} error={error} onDecline={() => void declinePurchase()} />}
-          {stage === "record" && record !== undefined && <RecordStage record={record} />}
+          {stage === "checkout" && authorization !== undefined && <CheckoutStage authorization={authorization} error={error} loading={loading} onDecline={() => void declinePurchase()} onSubmit={() => void submitCheckout()} />}
+          {stage === "record" && record !== undefined && <RecordStage error={error} record={record} />}
         </section>
       </main>
 

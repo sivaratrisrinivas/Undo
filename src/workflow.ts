@@ -14,8 +14,12 @@ import type {
   Offer,
   PolicyAssessment,
   PremiumLimitInr,
+  PreviousSandboxPurchase,
   Product,
   ProductEquivalence,
+  PravaCheckoutRequest,
+  PravaCheckoutResult,
+  PurchaseCheckoutResult,
   PurchaseAuthorizationResult,
   PurchaseAuthorization,
   ReversibilityAssessment,
@@ -49,7 +53,8 @@ export type AssessmentAdapters = {
       offers: ReadonlyArray<Offer>,
       destinationReference: string,
     ): Promise<AdapterResult<ReadonlyArray<CheckoutQuote>>>;
-    submitCheckout(offer: Offer, maximumTotalInr: number): Promise<AdapterResult<never>>;
+    registerCheckout(request: PravaCheckoutRequest): Promise<"registered" | "unavailable">;
+    submitCheckout(request: PravaCheckoutRequest): Promise<PravaCheckoutResult>;
   };
   readonly evidence: {
     findReview(fingerprint: string): Promise<EvidenceReview | undefined>;
@@ -58,9 +63,17 @@ export type AssessmentAdapters = {
     saveCache(cache: ReviewedEvidenceCache): Promise<void>;
   };
   readonly authorization: PurchaseAuthorizationRepository;
+  readonly records: UndoRecordRepository;
   readonly now: () => string;
   readonly nextAuthorizationId: () => string;
   readonly nextRecordId: () => string;
+};
+
+/** Persistence boundary for auditable Undo Records and historical sandbox fallback. */
+export type UndoRecordRepository = {
+  save(record: UndoRecord): Promise<"saved" | "unavailable">;
+  find(id: string): Promise<UndoRecord | undefined>;
+  latestCompletedPurchase(): Promise<PreviousSandboxPurchase | undefined>;
 };
 
 /** Durable state retained for one Purchase Authorization lifecycle. */
@@ -873,6 +886,24 @@ export class AssessmentWorkflow {
     if (created === "unavailable") {
       return { _tag: "err", reason: "authorization_unavailable" };
     }
+    const registration = await this.adapters.prava.registerCheckout({
+      authorizationId: authorization.id,
+      expiresAt: authorization.expiresAt,
+      product: authorization.binding.product,
+      quantity: authorization.binding.quantity,
+      offer: selectedOffer.offer.offer,
+      destinationReference: authorization.binding.destinationReference,
+      maximumTotalInr: authorization.binding.maximumTotalInr,
+      paymentMethod: authorization.paymentMethod,
+    });
+    if (registration === "unavailable") {
+      await this.adapters.authorization.transition(
+        authorization.id,
+        JSON.stringify(authorization),
+        "invalidated",
+      );
+      return { _tag: "err", reason: "authorization_unavailable" };
+    }
     return { _tag: "ok", value: authorization };
   }
 
@@ -996,6 +1027,124 @@ export class AssessmentWorkflow {
     };
   }
 
+  /** Consumes one Purchase Authorization, submits once to Prava, and creates the final Undo Record. */
+  async checkout(claim: CheckoutSubmissionClaim): Promise<PurchaseCheckoutResult> {
+    const claimed = await this.claimCheckoutSubmission(claim);
+    if (claimed._tag === "err") return claimed;
+
+    const assessment = claim.assessment;
+    const selected = claim.selectedOffer;
+    const id = this.adapters.nextRecordId();
+    const createdAt = this.adapters.now();
+    const previousSandboxPurchase = await this.adapters.records.latestCompletedPurchase();
+    const recordBase = {
+      id,
+      createdAt,
+      product: assessment.product,
+      selectedMerchant: selected.offer.offer.merchant,
+      selectedSeller: selected.offer.offer.seller,
+      premiumLimitInr: assessment.premiumLimitInr,
+      destinationReference: assessment.destinationReference,
+      evidence: assessment.offers.map((offer) => offer.evidence),
+      recommendation: {
+        rankedOfferIds:
+          assessment.ranking._tag === "winner"
+            ? [assessment.ranking.offer.offer.id]
+            : assessment.ranking.offers.map((offer) => offer.offer.id),
+        selectedOfferId: selected.offer.offer.id,
+        selection: selected.selection,
+        rankingRules: "remedy-ranking/1.0" as const,
+      },
+      authorizationId: claimed.value.authorization.id,
+      approvedMaximumTotalInr: claimed.value.authorization.binding.maximumTotalInr,
+      versions: {
+        policySchema: "policy-schema/1.0" as const,
+        extractionPrompt: "policy-extraction/1.0" as const,
+        model: this.adapters.openAi.modelVersion(),
+        rankingRules: "remedy-ranking/1.0" as const,
+      },
+    };
+    const pendingRecord: UndoRecord = {
+      ...recordBase,
+      outcome: "outcome_unknown",
+      confirmedCheckoutTotalInr: claimed.value.quote.totalInr,
+      authorizationState: "used",
+      pravaStatus: "outcome_unknown",
+      merchantOrderIdentifier: null,
+      ...(previousSandboxPurchase === undefined ? {} : { previousSandboxPurchase }),
+      blockingReason: "Checkout handoff began, but no final Prava result has been recorded.",
+      assumptions: [
+        "The Purchase Authorization was consumed before the checkout handoff.",
+        "An order may exist, so Undo must not submit this authorization again.",
+      ],
+    };
+    if (await this.adapters.records.save(pendingRecord) === "unavailable") {
+      return { _tag: "err", reason: "record_unavailable", record: pendingRecord };
+    }
+
+    const checkoutResult = await this.adapters.prava.submitCheckout({
+      authorizationId: claimed.value.authorization.id,
+      expiresAt: claimed.value.authorization.expiresAt,
+      product: claimed.value.authorization.binding.product,
+      quantity: claimed.value.authorization.binding.quantity,
+      offer: claim.selectedOffer.offer.offer,
+      destinationReference: claimed.value.authorization.binding.destinationReference,
+      maximumTotalInr: claimed.value.authorization.binding.maximumTotalInr,
+      paymentMethod: claimed.value.paymentMethod,
+    });
+    const notSubmitted = checkoutResult._tag === "not_submitted";
+    const outcome: UndoRecord["outcome"] = notSubmitted
+      ? checkoutResult.reason
+      : checkoutResult.paymentStatus === "successful"
+        ? "purchased"
+        : checkoutResult.paymentStatus === "failed"
+          ? "purchase_unavailable"
+          : "outcome_unknown";
+    const pravaStatus: UndoRecord["pravaStatus"] = notSubmitted
+      ? "not_submitted"
+      : checkoutResult.paymentStatus === "successful"
+        ? "payment_succeeded"
+        : checkoutResult.paymentStatus === "failed"
+          ? "confirmed_failure"
+          : "outcome_unknown";
+    const blockingReason = notSubmitted
+      ? checkoutResult.explanation
+      : checkoutResult.paymentStatus === "successful"
+        ? undefined
+        : checkoutResult.failureReason;
+    const orderIdentifier = notSubmitted
+      ? null
+      : checkoutResult.merchantOrderIdentifier;
+    const record: UndoRecord = {
+        ...recordBase,
+        outcome,
+        confirmedCheckoutTotalInr: checkoutResult.confirmedTotalInr,
+        authorizationState: notSubmitted ? "used_without_submission" : "used",
+        pravaStatus,
+        merchantOrderIdentifier: orderIdentifier,
+        ...(outcome === "purchased" || previousSandboxPurchase === undefined
+          ? {}
+          : { previousSandboxPurchase }),
+        ...(blockingReason === undefined ? {} : { blockingReason }),
+        assumptions: [
+          "Each curated Offer was checked against the supported Product identity before Purchase Authorization.",
+          "Prava received only the exact authorized Product, quantity, merchant, seller, destination reference, payment method, and maximum total.",
+          notSubmitted
+            ? "The Purchase Authorization was consumed safely before Prava rejected the attempt without submitting checkout."
+            : outcome === "outcome_unknown"
+            ? "Checkout was submitted once; an order may exist, so Undo did not retry automatically."
+            : "The Purchase Authorization was consumed by exactly one Prava checkout attempt.",
+        ],
+      };
+    if (await this.adapters.records.save(record) === "unavailable") {
+      return { _tag: "err", reason: "record_unavailable", record };
+    }
+    return {
+      _tag: "ok",
+      value: record,
+    };
+  }
+
   /** Records a buyer decision without submitting checkout. */
   async decline(
     assessment: ReversibilityAssessment,
@@ -1050,7 +1199,7 @@ export class AssessmentWorkflow {
       }
       authorizationState = "authorized_not_submitted";
     }
-    return { _tag: "ok", value: {
+    const record: UndoRecord = {
       id: this.adapters.nextRecordId(),
       createdAt: this.adapters.now(),
       outcome: "buyer_declined",
@@ -1070,7 +1219,11 @@ export class AssessmentWorkflow {
         selection: selected.selection,
         rankingRules: "remedy-ranking/1.0",
       },
+      authorizationId: authorization?.id ?? null,
       authorizationState,
+      approvedMaximumTotalInr: authorization?.binding.maximumTotalInr ?? null,
+      pravaStatus: "not_submitted",
+      merchantOrderIdentifier: null,
       assumptions: [
         "Each curated Offer was checked against the supported Product identity before any Purchase Authorization.",
         "Checkout totals were supplied by the configured Prava boundary for the selected destination.",
@@ -1082,7 +1235,11 @@ export class AssessmentWorkflow {
         model: this.adapters.openAi.modelVersion(),
         rankingRules: "remedy-ranking/1.0",
       },
-    } };
+    };
+    if (await this.adapters.records.save(record) === "unavailable") {
+      return { _tag: "err", reason: "record_unavailable", record };
+    }
+    return { _tag: "ok", value: record };
   }
 
   private hasCompleteEvidence(product: Product, evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
@@ -1240,7 +1397,11 @@ export class AssessmentWorkflow {
         selection: "none",
         rankingRules: "remedy-ranking/1.0",
       },
+      authorizationId: null,
       authorizationState: "not_requested",
+      approvedMaximumTotalInr: null,
+      pravaStatus: "not_submitted",
+      merchantOrderIdentifier: null,
       blockingReason,
       assumptions: [
         "Any Offer must pass the supported Product identity check before Purchase Authorization.",

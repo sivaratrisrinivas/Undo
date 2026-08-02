@@ -6,6 +6,16 @@ import { App } from "./App";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "./domain";
 
+async function reachCheckout(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Start assessment" }));
+  await user.click(screen.getByRole("button", { name: "Compare offers" }));
+  await user.click(await screen.findByRole("button", { name: "Inspect evidence" }));
+  await user.click(screen.getByRole("button", { name: "Review approval summary" }));
+  await user.click(screen.getByRole("checkbox", { name: /sealed and unopened/i }));
+  await user.click(screen.getByRole("checkbox", { name: /No fee stated/i }));
+  await user.click(screen.getByRole("button", { name: "Create Purchase Authorization" }));
+}
+
 describe("guided Reversibility Assessment", () => {
   it("lets a buyer assess the supported Product, decline checkout, and receive an Undo Record", async () => {
     const user = userEvent.setup();
@@ -68,6 +78,52 @@ describe("guided Reversibility Assessment", () => {
       pravaQuoteRequests: 1,
       pravaCheckoutRequests: 0,
     });
+  }, 10_000);
+
+  it("submits once through Prava and shows a Completed Purchase only with an order identifier", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({
+      recordId: "undo-purchased-001",
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "successful",
+        merchantOrderIdentifier: "merchant-order-001",
+        confirmedTotalInr: 14_990,
+      },
+    });
+    render(<App adapters={adapters} />);
+    await reachCheckout(user);
+
+    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+
+    expect(await screen.findByText("Purchased")).toBeVisible();
+    expect(screen.getByText("merchant-order-001")).toBeVisible();
+    expect(screen.getByText("Used for one checkout attempt")).toBeVisible();
+    expect(screen.getByText("Payment successful and merchant order confirmed")).toBeVisible();
+    expect(adapters.activity.pravaCheckoutRequests).toBe(1);
+  }, 10_000);
+
+  it("warns that an order may exist when Prava cannot confirm the submitted checkout", async () => {
+    const user = userEvent.setup();
+    const adapters = createFakeAdapters({
+      checkoutResult: {
+        _tag: "submitted",
+        paymentStatus: "unknown",
+        merchantOrderIdentifier: null,
+        confirmedTotalInr: null,
+        failureReason: "Prava timed out after checkout submission; an order may exist",
+      },
+    });
+    render(<App adapters={adapters} />);
+    await reachCheckout(user);
+
+    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+
+    expect(await screen.findByText("Purchase outcome unknown")).toBeVisible();
+    expect(screen.getByText("Unknown — an order may exist; no automatic retry")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("an order may exist");
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(adapters.activity.pravaCheckoutRequests).toBe(1);
   }, 10_000);
 
   it.each(SUPPORTED_OFFERS)(

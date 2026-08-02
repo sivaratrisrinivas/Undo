@@ -80,11 +80,15 @@ function makeAdapters(
       extractPolicies: () => Promise.resolve({ _tag: "ok", value: policies }),
     },
     prava: {
+      registerCheckout: () => Promise.resolve("registered"),
       quoteOffers: () => Promise.resolve({ _tag: "ok", value: quotes }),
       submitCheckout: () =>
         Promise.resolve({
-          _tag: "err",
-          error: { _tag: "DependencyUnavailable", dependency: "prava", cause: "not used" },
+          _tag: "submitted",
+          paymentStatus: "unknown",
+          merchantOrderIdentifier: null,
+          confirmedTotalInr: null,
+          failureReason: "not used",
         }),
     },
     evidence: {
@@ -94,6 +98,7 @@ function makeAdapters(
       saveCache: () => Promise.resolve(),
     },
     authorization: createInMemoryPurchaseAuthorizationRepository(),
+    records: { save: () => Promise.resolve("saved"), find: () => Promise.resolve(undefined), latestCompletedPurchase: () => Promise.resolve(undefined) },
     now: () => "2026-08-01T12:00:00.000Z",
     nextAuthorizationId: () => "ranking-authorization",
     nextRecordId: () => "ranking-test",

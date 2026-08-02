@@ -329,6 +329,53 @@ export type CheckoutSubmissionClaimResult =
         | "total_exceeded";
     };
 
+/** Secret-free facts sent to Prava after a Purchase Authorization is atomically consumed. */
+export type PravaCheckoutRequest = {
+  readonly authorizationId: string;
+  readonly expiresAt: string;
+  readonly product: Product;
+  readonly quantity: 1;
+  readonly offer: Offer;
+  readonly destinationReference: string;
+  readonly maximumTotalInr: number;
+  readonly paymentMethod: AuthorizedPaymentMethod;
+};
+
+/** A clearly historical successful sandbox transaction, never the current attempt. */
+export type PreviousSandboxPurchase = {
+  readonly purchasedAt: string;
+  readonly merchantOrderIdentifier: string;
+};
+
+/** Prava's safe checkout result after any credential handling remains behind its boundary. */
+export type PravaCheckoutResult =
+  | {
+      readonly _tag: "not_submitted";
+      readonly reason: "blocked_by_price" | "purchase_unavailable";
+      readonly confirmedTotalInr: number | null;
+      readonly explanation: string;
+    }
+  | {
+      readonly _tag: "submitted";
+      readonly paymentStatus: "successful";
+      readonly merchantOrderIdentifier: string;
+      readonly confirmedTotalInr: number;
+    }
+  | {
+      readonly _tag: "submitted";
+      readonly paymentStatus: "failed";
+      readonly merchantOrderIdentifier: null;
+      readonly confirmedTotalInr: number;
+      readonly failureReason: string;
+    }
+  | {
+      readonly _tag: "submitted";
+      readonly paymentStatus: "unknown";
+      readonly merchantOrderIdentifier: string | null;
+      readonly confirmedTotalInr: number | null;
+      readonly failureReason: string;
+    };
+
 /** The completed assessment data shown before a purchase decision. */
 export type ReversibilityAssessment = {
   readonly product: Product;
@@ -351,7 +398,7 @@ export type PremiumLimitParseResult =
   | { readonly _tag: "ok"; readonly value: PremiumLimitInr }
   | { readonly _tag: "err"; readonly message: string };
 
-/** A durable snapshot produced when the buyer declines the assessed purchase. */
+/** A durable, secret-free snapshot produced for every completed Reversibility Assessment. */
 export type UndoRecord = {
   readonly id: string;
   readonly createdAt: string;
@@ -359,7 +406,9 @@ export type UndoRecord = {
     | "buyer_declined"
     | "blocked_by_policy"
     | "blocked_by_price"
-    | "purchase_unavailable";
+    | "purchase_unavailable"
+    | "purchased"
+    | "outcome_unknown";
   readonly product: Product;
   readonly selectedMerchant: string | null;
   readonly selectedSeller: string | null;
@@ -373,7 +422,20 @@ export type UndoRecord = {
     readonly selection: "ranking_winner" | "buyer_selected_tie" | "buyer_override" | "none";
     readonly rankingRules: "remedy-ranking/1.0";
   };
-  readonly authorizationState: "not_requested" | "authorized_not_submitted";
+  readonly authorizationId: string | null;
+  readonly authorizationState:
+    | "not_requested"
+    | "authorized_not_submitted"
+    | "used_without_submission"
+    | "used";
+  readonly approvedMaximumTotalInr: number | null;
+  readonly pravaStatus:
+    | "not_submitted"
+    | "payment_succeeded"
+    | "confirmed_failure"
+    | "outcome_unknown";
+  readonly merchantOrderIdentifier: string | null;
+  readonly previousSandboxPurchase?: PreviousSandboxPurchase;
   readonly blockingReason?: string;
   readonly assumptions: ReadonlyArray<string>;
   readonly versions: {
@@ -393,7 +455,14 @@ export type BuyerDeclineResult =
         | "selection_mismatch"
         | "authorization_invalid"
         | "authorization_unavailable";
-    };
+    }
+  | { readonly _tag: "err"; readonly reason: "record_unavailable"; readonly record: UndoRecord };
+
+/** Typed result of consuming one Purchase Authorization and completing its checkout workflow. */
+export type PurchaseCheckoutResult =
+  | { readonly _tag: "ok"; readonly value: UndoRecord }
+  | Extract<CheckoutSubmissionClaimResult, { readonly _tag: "err" }>
+  | { readonly _tag: "err"; readonly reason: "record_unavailable"; readonly record: UndoRecord };
 
 /** Fixed Product identity shared by every supported Offer. */
 export const SUPPORTED_PRODUCT: Product = {

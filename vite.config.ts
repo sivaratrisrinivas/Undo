@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import { randomUUID } from "node:crypto";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
@@ -9,7 +10,10 @@ import {
   parsePolicyEvidenceInput,
 } from "./src/adapters/openai-policy-extraction-server.ts";
 import {
+  checkoutWithPrava,
   parsePravaQuoteRequest,
+  parsePravaCheckoutRequest,
+  pravaCheckoutCredentialsFrom,
   quoteOffersWithPrava,
 } from "./src/adapters/prava-shopping-server.ts";
 import { OFFICIAL_EVIDENCE_SOURCES, SUPPORTED_PRODUCT, type Product } from "./src/domain.ts";
@@ -20,6 +24,11 @@ function boundaryRecord(value: unknown): Record<string, unknown> {
   }
   // SAFETY: The object/null/array checks above establish a plain JSON object boundary.
   return value as Record<string, unknown>;
+}
+
+function hasExactBoundaryKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function parseProduct(value: unknown): Product {
@@ -196,6 +205,103 @@ function pravaCheckoutQuotesPlugin(): Plugin {
   };
 }
 
+function pravaCheckoutPlugin(env: Record<string, string>): Plugin {
+  const credentials = pravaCheckoutCredentialsFrom(env);
+  const checkoutAuthorizations = new Map<string, { readonly request: string; readonly grant: string }>();
+  const consumedAuthorizationIds = new Set<string>();
+  return {
+    name: "undo-prava-checkout",
+    configureServer(server) {
+      server.middlewares.use("/api/checkout-authorizations", (request, response, next) => {
+        if (request.method !== "POST") {
+          next();
+          return;
+        }
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => { body += chunk; });
+        request.on("end", () => {
+          try {
+            if (body.length > 100_000) throw new Error("Request is too large");
+            const payload: unknown = JSON.parse(body);
+            const input = parsePravaCheckoutRequest(payload);
+            if (
+              Date.parse(input.expiresAt) <= Date.now() ||
+              checkoutAuthorizations.has(input.authorizationId) ||
+              consumedAuthorizationIds.has(input.authorizationId)
+            ) {
+              throw new Error("Purchase Authorization is expired or already registered");
+            }
+            const checkoutGrant = randomUUID();
+            checkoutAuthorizations.set(input.authorizationId, {
+              request: JSON.stringify(input),
+              grant: checkoutGrant,
+            });
+            response.statusCode = 201;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ checkoutGrant }));
+          } catch {
+            response.statusCode = 422;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ error: "Invalid Purchase Authorization" }));
+          }
+        });
+      });
+      server.middlewares.use("/api/checkout", (request, response, next) => {
+        if (request.method !== "POST") {
+          next();
+          return;
+        }
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => { body += chunk; });
+        request.on("end", () => {
+          const handleRequest = async () => {
+            if (body.length > 100_000) {
+              response.statusCode = 413;
+              response.end(JSON.stringify({ error: "Request is too large" }));
+              return;
+            }
+            let input;
+            try {
+              const payload: unknown = JSON.parse(body);
+              const envelope = boundaryRecord(payload);
+              if (
+                !hasExactBoundaryKeys(envelope, ["request", "checkoutGrant"]) ||
+                typeof envelope.checkoutGrant !== "string" || envelope.checkoutGrant.trim() === ""
+              ) throw new Error("Invalid checkout grant");
+              input = parsePravaCheckoutRequest(envelope.request);
+              const storedAuthorization = checkoutAuthorizations.get(input.authorizationId);
+              if (
+                storedAuthorization === undefined ||
+                storedAuthorization.request !== JSON.stringify(input) ||
+                storedAuthorization.grant !== envelope.checkoutGrant ||
+                Date.parse(input.expiresAt) <= Date.now()
+              ) throw new Error("Purchase Authorization unavailable");
+            } catch (cause: unknown) {
+              response.statusCode = cause instanceof SyntaxError ? 400 : 409;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: "Invalid Prava checkout request" }));
+              return;
+            }
+            checkoutAuthorizations.delete(input.authorizationId);
+            consumedAuthorizationIds.add(input.authorizationId);
+            const result = await checkoutWithPrava(input, credentials);
+            response.statusCode = 200;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ result }));
+          };
+          handleRequest().catch(() => {
+            response.statusCode = 503;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify({ error: "Checkout outcome unavailable" }));
+          });
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
@@ -204,6 +310,7 @@ export default defineConfig(({ mode }) => {
       sensoEvidencePlugin(env),
       openAiPolicyExtractionPlugin(env),
       pravaCheckoutQuotesPlugin(),
+      pravaCheckoutPlugin(env),
     ],
     test: {
       environment: "jsdom",

@@ -7,6 +7,8 @@ import {
   SUPPORTED_PRODUCT,
   type CheckoutQuote,
   type Offer,
+  type PravaCheckoutRequest,
+  type PravaCheckoutResult,
   type Product,
 } from "../domain.ts";
 
@@ -16,6 +18,7 @@ type CommandOutput = {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly timedOut?: boolean;
 };
 
 type PravaQuoteResult =
@@ -34,6 +37,50 @@ export type PravaCommandRunner = (
   args: ReadonlyArray<string>,
   timeoutMs: number,
 ) => Promise<CommandOutput>;
+
+/** Server-only one-time credential used by Prava's accepted sandbox card path. */
+export type PravaCheckoutCredentials = {
+  readonly token: string;
+  readonly cryptogram: string;
+  readonly expiryMonth: string;
+  readonly expiryYear: string;
+};
+
+/** Atomically exposes one Prava credential at most once and redacts string coercion. */
+export class OneTimePravaCheckoutCredential {
+  #value: PravaCheckoutCredentials | undefined;
+
+  constructor(value: PravaCheckoutCredentials) {
+    this.#value = value;
+  }
+
+  /** Consumes the credential once; later calls prove it is no longer available. */
+  take(): PravaCheckoutCredentials | undefined {
+    const value = this.#value;
+    this.#value = undefined;
+    return value;
+  }
+
+  /** Prevents accidental secret disclosure through interpolation or ordinary logging. */
+  toString(): string {
+    return "[REDACTED Prava checkout credential]";
+  }
+}
+
+/** Reads a complete one-time sandbox credential without exposing partial values. */
+export function pravaCheckoutCredentialsFrom(
+  env: Readonly<Record<string, string | undefined>>,
+): OneTimePravaCheckoutCredential | undefined {
+  const token = stringAt(env.PRAVA_SANDBOX_TOKEN);
+  const cryptogram = stringAt(env.PRAVA_SANDBOX_CRYPTOGRAM);
+  const expiryMonth = stringAt(env.PRAVA_SANDBOX_EXPIRY_MONTH);
+  const expiryYear = stringAt(env.PRAVA_SANDBOX_EXPIRY_YEAR);
+  return token === undefined || cryptogram === undefined ||
+    expiryMonth === undefined || !/^(0[1-9]|1[0-2])$/.test(expiryMonth) ||
+    expiryYear === undefined || !/^20\d{2}$/.test(expiryYear)
+    ? undefined
+    : new OneTimePravaCheckoutCredential({ token, cryptogram, expiryMonth, expiryYear });
+}
 
 type CatalogConfig = {
   readonly offerId: Offer["id"];
@@ -69,6 +116,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown> | undefined,
+  keys: ReadonlyArray<string>,
+): value is Record<string, unknown> {
+  if (value === undefined) return false;
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function stringAt(value: unknown): string | undefined {
@@ -298,11 +354,17 @@ export const runInstalledPrava: PravaCommandRunner = async (args, timeoutMs) => 
     return { exitCode: 0, stdout: output.stdout, stderr: output.stderr };
   } catch (cause: unknown) {
     if (typeof cause !== "object" || cause === null) throw cause;
-    const failure = cause as { readonly code?: unknown; readonly stdout?: unknown; readonly stderr?: unknown };
+    const failure = cause as {
+      readonly code?: unknown;
+      readonly killed?: unknown;
+      readonly stdout?: unknown;
+      readonly stderr?: unknown;
+    };
     return {
       exitCode: typeof failure.code === "number" ? failure.code : 1,
       stdout: typeof failure.stdout === "string" ? failure.stdout : "",
       stderr: typeof failure.stderr === "string" ? failure.stderr : "",
+      timedOut: failure.killed === true || failure.code === "ETIMEDOUT",
     };
   }
 };
@@ -350,4 +412,238 @@ export function parsePravaQuoteRequest(value: unknown): {
   });
   if (!exactOffers) throw new Error("Invalid Prava quote request");
   return { offers: SUPPORTED_OFFERS, destinationReference };
+}
+
+function isSupportedProduct(value: unknown): value is Product {
+  const product = record(value);
+  return hasExactKeys(product, [
+    "manufacturer", "model", "variant", "condition", "bundleContents", "warrantyRegion",
+  ]) &&
+    product.manufacturer === SUPPORTED_PRODUCT.manufacturer &&
+    product.model === SUPPORTED_PRODUCT.model &&
+    product.variant === SUPPORTED_PRODUCT.variant &&
+    product.condition === SUPPORTED_PRODUCT.condition &&
+    product.bundleContents === SUPPORTED_PRODUCT.bundleContents &&
+    product.warrantyRegion === SUPPORTED_PRODUCT.warrantyRegion;
+}
+
+function isSafeDestinationReference(value: string | undefined): value is string {
+  return value !== undefined && (
+    value === "destination-ref-prava-default" ||
+    /^addr_[a-zA-Z0-9_-]{1,200}$/.test(value)
+  );
+}
+
+/** Parses the secret-free, exact Purchase Authorization facts accepted by checkout. */
+export function parsePravaCheckoutRequest(value: unknown): PravaCheckoutRequest {
+  const payload = record(value);
+  const authorizationId = stringAt(payload?.authorizationId);
+  const expiresAt = stringAt(payload?.expiresAt);
+  const destinationReference = stringAt(payload?.destinationReference);
+  const maximumTotalInr = payload?.maximumTotalInr;
+  const offerValue = record(payload?.offer);
+  const offer = SUPPORTED_OFFERS.find((candidate) =>
+    candidate.id === offerValue?.id &&
+    candidate.merchant === offerValue.merchant &&
+    candidate.seller === offerValue.seller &&
+    candidate.url === offerValue.url,
+  );
+  if (
+    !hasExactKeys(payload, [
+      "authorizationId", "expiresAt", "product", "quantity", "offer", "destinationReference",
+      "maximumTotalInr", "paymentMethod",
+    ]) ||
+    !hasExactKeys(offerValue, ["id", "merchant", "seller", "url"]) ||
+    authorizationId === undefined ||
+    authorizationId.length > 200 ||
+    !/^[a-zA-Z0-9_-]+$/.test(authorizationId) ||
+    expiresAt === undefined || !Number.isFinite(Date.parse(expiresAt)) ||
+    !isSupportedProduct(payload?.product) ||
+    payload?.quantity !== 1 ||
+    offer === undefined ||
+    !isSafeDestinationReference(destinationReference) ||
+    typeof maximumTotalInr !== "number" ||
+    !Number.isFinite(maximumTotalInr) ||
+    maximumTotalInr < 0 ||
+    payload?.paymentMethod !== "prava_one_time_prepaid"
+  ) {
+    throw new Error("Invalid Prava checkout request");
+  }
+  return {
+    authorizationId,
+    expiresAt,
+    product: SUPPORTED_PRODUCT,
+    quantity: 1,
+    offer,
+    destinationReference,
+    maximumTotalInr,
+    paymentMethod: "prava_one_time_prepaid",
+  };
+}
+
+async function prepareAuthorizedCheckout(
+  request: PravaCheckoutRequest,
+  runner: PravaCommandRunner,
+): Promise<{ readonly quote: CheckoutQuote; readonly checkoutSessionId: string } | undefined> {
+  const config = configFor(request.offer);
+  if (config === undefined) return undefined;
+  const productPayload = await runJson(
+    runner,
+    ["shop", "product", "--product-id", config.productId, "--merchant", config.merchantDomain, "--json"],
+    30_000,
+  );
+  const verified = parseVerifiedVariant(productPayload, config);
+  if (verified === undefined) return undefined;
+  const quoteArgs = [
+    "shop", "quote", "--variant-id", verified.variantId,
+    "--merchant", config.merchantDomain,
+    "--quantity", String(request.quantity), "--yes", "--json",
+  ];
+  if (request.destinationReference !== "destination-ref-prava-default") {
+    quoteArgs.push("--address-id", request.destinationReference);
+  }
+  const quotePayload = await runJson(runner, quoteArgs, 50_000);
+  const checkoutSessionId = stringAt(record(quotePayload)?.checkout_session_id);
+  const quote = parseQuote(
+    quotePayload,
+    request.offer,
+    config,
+    request.destinationReference,
+    verified.product,
+  );
+  return checkoutSessionId === undefined || quote === undefined
+    ? undefined
+    : { quote, checkoutSessionId };
+}
+
+/** Re-quotes and submits one authorized Prava sandbox checkout without retrying the charge. */
+export async function checkoutWithPrava(
+  request: PravaCheckoutRequest,
+  credential: OneTimePravaCheckoutCredential | undefined,
+  runner: PravaCommandRunner = runInstalledPrava,
+): Promise<PravaCheckoutResult> {
+  if (credential === undefined) {
+    return {
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: null,
+      explanation: "Prava one-time sandbox checkout is not configured",
+    };
+  }
+  let prepared;
+  try {
+    prepared = await prepareAuthorizedCheckout(request, runner);
+  } catch {
+    return {
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: null,
+      explanation: "Prava could not prepare a fresh checkout quote",
+    };
+  }
+  if (prepared === undefined) {
+    return {
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: null,
+      explanation: "Prava could not verify the authorized Product and Offer",
+    };
+  }
+  if (prepared.quote.totalInr > request.maximumTotalInr) {
+    return {
+      _tag: "not_submitted",
+      reason: "blocked_by_price",
+      confirmedTotalInr: prepared.quote.totalInr,
+      explanation: "The fresh Prava total exceeds the authorized maximum",
+    };
+  }
+
+  const credentials = credential.take();
+  if (credentials === undefined) {
+    return {
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      confirmedTotalInr: prepared.quote.totalInr,
+      explanation: "The one-time Prava checkout credential was already consumed",
+    };
+  }
+
+  let output: CommandOutput;
+  try {
+    output = await runner([
+      "shop", "checkout",
+      "--checkout-session-id", prepared.checkoutSessionId,
+      "--token", credentials.token,
+      "--cryptogram", credentials.cryptogram,
+      "--expiry-month", credentials.expiryMonth,
+      "--expiry-year", credentials.expiryYear,
+      "--yes", "--json",
+    ], 120_000);
+  } catch {
+    return {
+      _tag: "submitted",
+      paymentStatus: "unknown",
+      merchantOrderIdentifier: null,
+      confirmedTotalInr: prepared.quote.totalInr,
+      failureReason: "Prava did not confirm whether the merchant accepted the order",
+    };
+  }
+  if (output.timedOut === true) {
+    return {
+      _tag: "submitted",
+      paymentStatus: "unknown",
+      merchantOrderIdentifier: null,
+      confirmedTotalInr: prepared.quote.totalInr,
+      failureReason: "Prava timed out after checkout submission; an order may exist",
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = parseJson(output.stdout);
+  } catch {
+    return {
+      _tag: "submitted",
+      paymentStatus: "unknown",
+      merchantOrderIdentifier: null,
+      confirmedTotalInr: prepared.quote.totalInr,
+      failureReason: "Prava returned an unreadable result after checkout submission",
+    };
+  }
+  const envelope = record(payload);
+  const data = record(envelope?.data);
+  const status = stringAt(data?.status);
+  const orderIdentifier = stringAt(data?.order_id) ?? null;
+  if (envelope?.success === true && status === "paid") {
+    if (orderIdentifier === null) {
+      return {
+        _tag: "submitted",
+        paymentStatus: "unknown",
+        merchantOrderIdentifier: null,
+        confirmedTotalInr: prepared.quote.totalInr,
+        failureReason: "Prava reported successful payment without a merchant order identifier",
+      };
+    }
+    return {
+      _tag: "submitted",
+      paymentStatus: "successful",
+      merchantOrderIdentifier: orderIdentifier,
+      confirmedTotalInr: prepared.quote.totalInr,
+    };
+  }
+  if (status !== undefined && ["cancelled", "declined", "expired", "failed"].includes(status)) {
+    return {
+      _tag: "submitted",
+      paymentStatus: "failed",
+      merchantOrderIdentifier: null,
+      confirmedTotalInr: prepared.quote.totalInr,
+      failureReason: `Prava confirmed checkout ${status}`,
+    };
+  }
+  return {
+    _tag: "submitted",
+    paymentStatus: "unknown",
+    merchantOrderIdentifier: null,
+    confirmedTotalInr: prepared.quote.totalInr,
+    failureReason: "Prava did not confirm whether the merchant accepted the order",
+  };
 }

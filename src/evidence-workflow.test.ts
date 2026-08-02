@@ -110,6 +110,7 @@ function adapters(
       },
     },
     prava: {
+      registerCheckout: () => Promise.resolve("registered"),
       quoteOffers: (_offers, destinationReference) =>
         Promise.resolve({
           _tag: "ok",
@@ -134,8 +135,11 @@ function adapters(
         }),
       submitCheckout: () =>
         Promise.resolve({
-          _tag: "err",
-          error: { _tag: "DependencyUnavailable", dependency: "prava", cause: "not used" },
+          _tag: "submitted",
+          paymentStatus: "unknown",
+          merchantOrderIdentifier: null,
+          confirmedTotalInr: null,
+          failureReason: "not used",
         }),
     },
     evidence: {
@@ -148,6 +152,7 @@ function adapters(
       saveCache: () => Promise.resolve(),
     },
     authorization: createInMemoryPurchaseAuthorizationRepository(),
+    records: { save: () => Promise.resolve("saved"), find: () => Promise.resolve(undefined), latestCompletedPurchase: () => Promise.resolve(undefined) },
     now: () => "2026-08-02T09:00:00.000Z",
     nextAuthorizationId: () => "evidence-authorization",
     nextRecordId: () => "evidence-record",

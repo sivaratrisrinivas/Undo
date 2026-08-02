@@ -2,7 +2,10 @@ import type {
   CheckoutQuote,
   EvidenceSnapshot,
   PolicyAssessment,
+  PravaCheckoutResult,
+  PreviousSandboxPurchase,
   ReviewedEvidenceCache,
+  UndoRecord,
 } from "../domain";
 import { POLICY_FACTS, SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "../domain";
 import type {
@@ -244,6 +247,8 @@ export function createFakeAdapters(options?: {
   readonly failSenso?: boolean;
   readonly failOpenAi?: boolean;
   readonly failPravaQuote?: boolean;
+  readonly checkoutResult?: PravaCheckoutResult;
+  readonly previousSandboxPurchase?: PreviousSandboxPurchase;
   readonly unreviewed?: boolean;
   readonly scenario?: "default" | "exchange" | "tied" | "override";
   readonly quoteOverrides?: Partial<Record<CheckoutQuote["offerId"], Partial<CheckoutQuote>>>;
@@ -306,6 +311,7 @@ export function createFakeAdapters(options?: {
   let cache: ReviewedEvidenceCache | undefined;
   let authorizationSequence = 0;
   const authorization = createInMemoryPurchaseAuthorizationRepository();
+  const savedRecords: Array<UndoRecord> = [];
 
   return {
     activity,
@@ -376,15 +382,16 @@ export function createFakeAdapters(options?: {
         }));
         return Promise.resolve({ _tag: "ok" as const, value: overriddenQuotes });
       },
+      registerCheckout() {
+        return Promise.resolve("registered");
+      },
       submitCheckout() {
         activity.pravaCheckoutRequests += 1;
-        return Promise.resolve({
-          _tag: "err" as const,
-          error: {
-            _tag: "DependencyUnavailable" as const,
-            dependency: "prava" as const,
-            cause: new Error("Checkout is outside the decline-path skeleton"),
-          },
+        return Promise.resolve(options?.checkoutResult ?? {
+          _tag: "submitted" as const,
+          paymentStatus: "successful" as const,
+          merchantOrderIdentifier: "sandbox-order-demo-001",
+          confirmedTotalInr: 14_990,
         });
       },
     },
@@ -405,6 +412,29 @@ export function createFakeAdapters(options?: {
       },
     },
     authorization,
+    records: {
+      save(record) {
+        const existing = savedRecords.findIndex(({ id }) => id === record.id);
+        if (existing === -1) savedRecords.push(record);
+        else savedRecords[existing] = record;
+        return Promise.resolve("saved");
+      },
+      find(id) {
+        return Promise.resolve(savedRecords.find((record) => record.id === id));
+      },
+      latestCompletedPurchase() {
+        const savedPurchase = [...savedRecords].reverse().find(
+          (record) => record.outcome === "purchased" && record.merchantOrderIdentifier !== null,
+        );
+        if (savedPurchase === undefined || savedPurchase.merchantOrderIdentifier === null) {
+          return Promise.resolve(options?.previousSandboxPurchase);
+        }
+        return Promise.resolve({
+          purchasedAt: savedPurchase.createdAt,
+          merchantOrderIdentifier: savedPurchase.merchantOrderIdentifier,
+        });
+      },
+    },
     now: () => options?.now ?? "2026-08-01T12:00:00.000Z",
     nextAuthorizationId: () => {
       authorizationSequence += 1;

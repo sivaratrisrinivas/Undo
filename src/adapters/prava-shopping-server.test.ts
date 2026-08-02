@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { SUPPORTED_OFFERS } from "../domain";
+import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "../domain";
 import {
+  checkoutWithPrava,
+  OneTimePravaCheckoutCredential,
+  parsePravaCheckoutRequest,
   parsePravaQuoteRequest,
   quoteOffersWithPrava,
   type PravaCommandRunner,
@@ -9,6 +12,15 @@ import {
 
 function jsonOutput(value: unknown) {
   return { exitCode: 0, stdout: JSON.stringify(value), stderr: "" };
+}
+
+function credential() {
+  return new OneTimePravaCheckoutCredential({
+    token: "server-only-token",
+    cryptogram: "server-only-cryptogram",
+    expiryMonth: "12",
+    expiryYear: "2028",
+  });
 }
 
 describe("Prava shopping server boundary", () => {
@@ -114,9 +126,173 @@ describe("Prava shopping server boundary", () => {
       offers: SUPPORTED_OFFERS,
       destinationReference: "123 Example Street",
     })).toThrow("Invalid Prava quote request");
+    expect(() => parsePravaCheckoutRequest({
+      authorizationId: "authorization-extra-field",
+      expiresAt: "2026-08-02T18:00:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer: SUPPORTED_OFFERS[0],
+      destinationReference: "destination-ref-prava-default",
+      maximumTotalInr: 13_500,
+      paymentMethod: "prava_one_time_prepaid",
+      token: "must-not-cross-this-boundary",
+    })).toThrow("Invalid Prava checkout request");
     expect(() => parsePravaQuoteRequest({
       offers: [{ ...SUPPORTED_OFFERS[0], seller: "changed" }, ...SUPPORTED_OFFERS.slice(1)],
       destinationReference: "addr_home1",
     })).toThrow("Invalid Prava quote request");
+  });
+
+  it("submits the exact authorized sandbox checkout and requires payment success plus an order id", async () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const runner: PravaCommandRunner = (args) => {
+      commands.push(args);
+      if (args[1] === "product") {
+        return Promise.resolve(jsonOutput({
+          product: {
+            id: "gid://shopify/Product/4807978942527",
+            merchant: "headphonezone.in",
+            description: "Sennheiser HD 560S Black BOX CONTENTS standard cable 2 Year Warranty warranty in India",
+            variants: [{
+              id: "gid://shopify/ProductVariant/33115065450559",
+              merchantDomain: "headphonezone.in",
+              available: true,
+              currency: "INR",
+              priceAmount: 1_299_000,
+            }],
+          },
+        }));
+      }
+      if (args[1] === "quote") {
+        return Promise.resolve(jsonOutput({
+          merchant: "headphonezone.in",
+          checkout_session_id: "ches_authorized_001",
+          expires_at: "2026-08-02T18:00:00.000Z",
+          final_price: { amount: "13290.00", currency: "INR" },
+          price_breakdown: {
+            subtotal_cents: 1_299_000,
+            shipping_cents: 40_000,
+            tax_cents: 0,
+          },
+        }));
+      }
+      return Promise.resolve(jsonOutput({
+        success: true,
+        data: { status: "paid", order_id: "merchant-order-001" },
+      }));
+    };
+    const request = parsePravaCheckoutRequest({
+      authorizationId: "authorization-001",
+      expiresAt: "2026-08-02T18:00:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer: SUPPORTED_OFFERS[0],
+      destinationReference: "destination-ref-prava-default",
+      maximumTotalInr: 13_500,
+      paymentMethod: "prava_one_time_prepaid",
+    });
+
+    const checkoutCredential = credential();
+    const result = await checkoutWithPrava(request, checkoutCredential, runner);
+    const replay = await checkoutWithPrava(request, checkoutCredential, runner);
+
+    expect(result).toEqual({
+      _tag: "submitted",
+      paymentStatus: "successful",
+      merchantOrderIdentifier: "merchant-order-001",
+      confirmedTotalInr: 13_290,
+    });
+    const checkoutCommand = commands.find((args) => args[1] === "checkout");
+    expect(checkoutCommand).toContain("ches_authorized_001");
+    expect(checkoutCommand).toContain("--yes");
+    expect(commands.filter((args) => args[1] === "checkout")).toHaveLength(1);
+    expect(replay).toMatchObject({
+      _tag: "not_submitted",
+      explanation: "The one-time Prava checkout credential was already consumed",
+    });
+    expect(JSON.stringify(request)).not.toMatch(/"(?:token|cryptogram|cvv|cardNumber|phone|street)"/i);
+  });
+
+  it("does not call checkout when the fresh total exceeds the authorized maximum", async () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const runner: PravaCommandRunner = (args) => {
+      commands.push(args);
+      if (args[1] === "product") {
+        return Promise.resolve(jsonOutput({
+          product: {
+            id: "gid://shopify/Product/4807978942527",
+            merchant: "headphonezone.in",
+            description: "Sennheiser HD 560S Black BOX CONTENTS standard cable 2 Year Warranty warranty in India",
+            variants: [{ id: "gid://shopify/ProductVariant/33115065450559", merchantDomain: "headphonezone.in", available: true, currency: "INR", priceAmount: 1_299_000 }],
+          },
+        }));
+      }
+      return Promise.resolve(jsonOutput({
+        merchant: "headphonezone.in",
+        checkout_session_id: "ches_too_expensive",
+        expires_at: "2026-08-02T18:00:00.000Z",
+        final_price: { amount: "14000.00", currency: "INR" },
+        price_breakdown: { subtotal_cents: 1_400_000, shipping_cents: 0, tax_cents: 0 },
+      }));
+    };
+
+    const result = await checkoutWithPrava(parsePravaCheckoutRequest({
+      authorizationId: "authorization-002",
+      expiresAt: "2026-08-02T18:00:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer: SUPPORTED_OFFERS[0],
+      destinationReference: "destination-ref-prava-default",
+      maximumTotalInr: 13_500,
+      paymentMethod: "prava_one_time_prepaid",
+    }), credential(), runner);
+
+    expect(result).toMatchObject({ _tag: "not_submitted", reason: "blocked_by_price", confirmedTotalInr: 14_000 });
+    expect(commands.some((args) => args[1] === "checkout")).toBe(false);
+  });
+
+  it("keeps timeout and missing order confirmation ambiguous", async () => {
+    const baseRequest = parsePravaCheckoutRequest({
+      authorizationId: "authorization-003",
+      expiresAt: "2026-08-02T18:00:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer: SUPPORTED_OFFERS[0],
+      destinationReference: "destination-ref-prava-default",
+      maximumTotalInr: 15_000,
+      paymentMethod: "prava_one_time_prepaid",
+    });
+    const runnerFor = (checkoutOutput: ReturnType<typeof jsonOutput> & { readonly timedOut?: boolean }): PravaCommandRunner =>
+      (args) => {
+        if (args[1] === "product") return Promise.resolve(jsonOutput({
+          product: {
+            id: "gid://shopify/Product/4807978942527",
+            merchant: "headphonezone.in",
+            description: "Sennheiser HD 560S Black BOX CONTENTS standard cable 2 Year Warranty warranty in India",
+            variants: [{ id: "gid://shopify/ProductVariant/33115065450559", merchantDomain: "headphonezone.in", available: true, currency: "INR", priceAmount: 1_299_000 }],
+          },
+        }));
+        if (args[1] === "quote") return Promise.resolve(jsonOutput({
+          merchant: "headphonezone.in",
+          checkout_session_id: "ches_ambiguous",
+          expires_at: "2026-08-02T18:00:00.000Z",
+          final_price: { amount: "13290.00", currency: "INR" },
+          price_breakdown: { subtotal_cents: 1_329_000, shipping_cents: 0, tax_cents: 0 },
+        }));
+        return Promise.resolve(checkoutOutput);
+      };
+    const missingOrder = await checkoutWithPrava(
+      baseRequest,
+      credential(),
+      runnerFor(jsonOutput({ success: true, data: { status: "paid" } })),
+    );
+    const timeout = await checkoutWithPrava(
+      baseRequest,
+      credential(),
+      runnerFor({ exitCode: 1, stdout: "", stderr: "", timedOut: true }),
+    );
+
+    expect(missingOrder).toMatchObject({ _tag: "submitted", paymentStatus: "unknown", merchantOrderIdentifier: null });
+    expect(timeout).toMatchObject({ _tag: "submitted", paymentStatus: "unknown", merchantOrderIdentifier: null });
   });
 });
