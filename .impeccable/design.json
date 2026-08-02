@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-03T04:02:50+05:30",
+  "title": "Design System: Undo",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Instrument Ink", "tonalRamp": ["#171815", "#30312d", "#4a4b46", "#65655f", "#81817b", "#9d9d96", "#c0c0b9", "#e5e5dd"] },
+      "page": { "role": "neutral", "displayName": "Aluminium Page", "tonalRamp": ["#292a27", "#454640", "#63635d", "#81817a", "#a1a19a", "#c0c0b9", "#deded7", "#f7f7f3"] },
+      "surface": { "role": "neutral", "displayName": "Clean Surface", "tonalRamp": ["#292a27", "#464641", "#63635e", "#82827c", "#a1a19b", "#c0c0ba", "#deded8", "#f7f7f3"] },
+      "surface-quiet": { "role": "neutral", "displayName": "Quiet Surface", "tonalRamp": ["#282925", "#444540", "#60615b", "#7d7e77", "#9b9c95", "#b9bab2", "#d7d8d0", "#f3f3ed"] },
+      "line": { "role": "neutral", "displayName": "Calibration Line", "tonalRamp": ["#22231f", "#41423d", "#60615b", "#808079", "#9fa099", "#bec0b7", "#dcddd5", "#f5f6ef"] },
+      "line-strong": { "role": "neutral", "displayName": "Strong Calibration Line", "tonalRamp": ["#1e201c", "#3a3d36", "#585b54", "#767a72", "#969990", "#b5b8af", "#d5d7cf", "#f2f4ed"] },
+      "muted": { "role": "neutral", "displayName": "Muted Annotation", "tonalRamp": ["#1f241f", "#353c35", "#4c544c", "#646d65", "#7e877e", "#9aa39a", "#bbc3ba", "#e1e7df"] },
+      "dark": { "role": "secondary", "displayName": "Smoked Readout", "tonalRamp": ["#12130f", "#252722", "#3d4039", "#565a51", "#71766c", "#8e9389", "#b1b7ab", "#dce1d6"] },
+      "dark-raised": { "role": "secondary", "displayName": "Raised Readout", "tonalRamp": ["#131510", "#292c26", "#42463e", "#5d6158", "#797d73", "#969a90", "#b8bdb3", "#e1e5dc"] },
+      "dark-line": { "role": "secondary", "displayName": "Dark Divider", "tonalRamp": ["#151713", "#2c3029", "#464b42", "#62675d", "#7e8378", "#9ba095", "#bec3b7", "#e4e9de"] },
+      "dark-muted": { "role": "secondary", "displayName": "Dark Annotation", "tonalRamp": ["#222620", "#3c4239", "#575f53", "#737c6d", "#90998a", "#adb7a7", "#cbd4c4", "#e9f0e1"] },
+      "signal": { "role": "primary", "displayName": "Luminous Signal", "tonalRamp": ["#203000", "#3d5c00", "#608900", "#85b600", "#abd93b", "#c3f759", "#ddff9b", "#f1ffcf"] },
+      "signal-ink": { "role": "primary", "displayName": "Signal Ink", "tonalRamp": ["#101700", "#202f00", "#324800", "#466200", "#5d7d00", "#789a18", "#a5c65d", "#dceea8"] },
+      "warning": { "role": "tertiary", "displayName": "Evidence Warning", "tonalRamp": ["#403300", "#735b00", "#a18300", "#c9a82e", "#e8cd75", "#fff2c7", "#fff8df", "#fffdf0"] },
+      "warning-ink": { "role": "tertiary", "displayName": "Warning Ink", "tonalRamp": ["#261a00", "#473300", "#684c00", "#8b6800", "#ae8500", "#cda52f", "#e7cd79", "#fff1c4"] },
+      "danger": { "role": "tertiary", "displayName": "Evidence Danger", "tonalRamp": ["#32060a", "#5e1015", "#8b1d24", "#b6353c", "#d65b60", "#ed8789", "#f7b5b6", "#ffe2e2"] },
+      "danger-surface": { "role": "tertiary", "displayName": "Danger Wash", "tonalRamp": ["#3a1517", "#632c2f", "#8e484b", "#b96668", "#d98889", "#eeaeae", "#facfcf", "#fff0f0"] },
+      "focus": { "role": "tertiary", "displayName": "Focus Blue", "tonalRamp": ["#001e45", "#00366e", "#00519b", "#006dc6", "#398cd9", "#66abea", "#a1cef4", "#d9edfb"] },
+      "white": { "role": "neutral", "displayName": "White", "tonalRamp": ["#282828", "#454545", "#626262", "#818181", "#a0a0a0", "#c0c0c0", "#dedede", "#ffffff"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Console Display", "purpose": "Licensed, bundled Manrope Variable for the primary proposition, stage headings, merchant readout, and decisive totals; local-first fallbacks remain in the token." },
+      "body": { "displayName": "Evidence Text", "purpose": "Explanations, policy evidence, and long-form support copy in a deliberate local-first stack." },
+      "label": { "displayName": "Calibration Label", "purpose": "Compact metadata, field labels, states, and small technical annotations." }
+    },
+    "shadows": [
+      { "name": "working-plane", "value": "0 18px 55px rgba(28, 31, 27, .08)", "purpose": "Separate the setup and assessment working planes from the aluminium page." },
+      { "name": "quiet-record", "value": "0 14px 40px rgba(28, 31, 27, .06)", "purpose": "Give standalone record and review surfaces a quieter lift." },
+      { "name": "segmented-selection", "value": "0 2px 7px rgba(21, 23, 20, .1)", "purpose": "Confirm the selected segment without making the selector look elevated." }
+    ],
+    "motion": [
+      { "name": "control-transition", "value": "180ms ease-out", "purpose": "Hover and selection color, shadow, and transform changes." },
+      { "name": "signal-resolve", "value": "220ms cubic-bezier(.22, 1, .36, 1)", "purpose": "Recommendation readout resolves from blurred signal to clear decision; reduced-motion overrides it." }
+    ],
+    "breakpoints": [
+      { "name": "console-stack", "value": "1120px" },
+      { "name": "mobile-stack", "value": "760px" },
+      { "name": "compact-mobile", "value": "420px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The smoked default action becomes luminous only on hover or when placed in the authorization panel.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\"><span>Assess this purchase</span><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M5 12h13M14 7l5 5-5 5\"/></svg></button>",
+      "css": ".ds-btn-primary{width:100%;min-height:3.6rem;display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.15rem;color:var(--white);background:var(--dark);border:0;border-radius:11px;font:690 .9rem var(--font-text);cursor:pointer;transition:background-color 180ms ease-out,color 180ms ease-out,transform 180ms ease-out}.ds-btn-primary svg{width:1.2rem;height:1.2rem;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8}.ds-btn-primary:hover{color:var(--signal-ink);background:var(--signal)}.ds-btn-primary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.ds-btn-primary:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A ruled, transparent alternative for non-destructive choices such as saving without buying.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">Save assessment without buying</button>",
+      "css": ".ds-btn-secondary{width:100%;min-height:3rem;padding:.78rem 1rem;color:var(--ink);background:transparent;border:1px solid var(--line-strong);border-radius:11px;font:690 .82rem var(--font-text);cursor:pointer;transition:background-color 180ms ease-out,transform 180ms ease-out}.ds-btn-secondary:hover{background:rgba(255,255,255,.55)}.ds-btn-secondary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.ds-btn-secondary:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Purchase Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "A labelled white measurement field with supporting copy, used for buying boundaries.",
+      "html": "<label class=\"ds-field\"><span>Premium Limit</span><div><b>₹</b><input value=\"2000\" aria-label=\"Premium Limit\" /></div><small>Extra live total permitted for stronger reversibility.</small></label>",
+      "css": ".ds-field{display:grid;gap:.5rem;color:var(--ink);font-family:var(--font-text)}.ds-field>span{font-size:.76rem;font-weight:680}.ds-field>div{display:flex;align-items:center;min-height:3.15rem;background:var(--white);border:1px solid var(--line);border-radius:10px;transition:border-color 180ms ease-out}.ds-field>div:hover{border-color:var(--line-strong)}.ds-field>div:focus-within{border-color:var(--focus)}.ds-field b{padding-left:.9rem;color:var(--muted);font-weight:400}.ds-field input{width:100%;min-height:3rem;padding:.75rem .9rem .75rem .4rem;color:var(--ink);background:transparent;border:0;outline:0;font:inherit}.ds-field small{color:var(--muted);font-size:.7rem;line-height:1.5}"
+    },
+    {
+      "name": "Action Progress Rail",
+      "kind": "nav",
+      "refersTo": "progress-rail",
+      "description": "The three buyer actions remain visible while the safeguards are described as automatic work beneath them.",
+      "html": "<nav class=\"ds-progress\" aria-label=\"Assessment actions\"><ol><li class=\"ds-complete\"><i>✓</i><span><b>Configure</b><small>Product and boundaries</small></span></li><li class=\"ds-current\"><i>2</i><span><b>Understand</b><small>Recommendation and evidence</small></span></li><li><i>3</i><span><b>Authorize</b><small>One exact submission</small></span></li></ol><p><em></em>Seven safeguards run automatically</p></nav>",
+      "css": ".ds-progress{display:grid;grid-template-columns:minmax(0,1fr) auto;border-bottom:1px solid var(--line);font-family:var(--font-text)}.ds-progress ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:0;margin:0;list-style:none}.ds-progress li{min-height:5.25rem;display:flex;align-items:center;gap:.8rem;padding:1rem 1.25rem;color:#777d75;border-right:1px solid var(--line);font-size:.76rem}.ds-progress i{width:1.8rem;height:1.8rem;flex:0 0 auto;display:grid;place-items:center;border:1px solid currentColor;border-radius:50%;font-style:normal;font-size:.72rem;font-weight:720}.ds-progress span{display:grid;gap:.18rem;min-width:0}.ds-progress b{font-size:.86rem}.ds-progress small{overflow:hidden;color:inherit;font-size:.72rem;text-overflow:ellipsis;white-space:nowrap}.ds-progress .ds-current{color:var(--ink);background:rgba(255,255,255,.42)}.ds-progress .ds-current i{color:var(--signal-ink);background:var(--signal);border-color:var(--signal)}.ds-progress .ds-complete{color:#3c4832}.ds-progress .ds-complete i{color:var(--signal-ink);background:#dff9ab;border-color:#8eb631}.ds-progress p{display:flex;align-items:center;gap:.7rem;padding:0 1.25rem;margin:0;color:var(--muted);font-size:.72rem;white-space:nowrap}.ds-progress em{width:.48rem;height:.48rem;border-radius:50%;background:#6da40b;box-shadow:0 0 0 4px rgba(109,164,11,.12)}"
+    },
+    {
+      "name": "Recommendation Readout",
+      "kind": "custom",
+      "refersTo": "recommendation-readout",
+      "description": "The primary decision channel joins a named recommendation, verified eligibility, total, rationale, and calibration specs.",
+      "html": "<section class=\"ds-readout\"><header><span>Recommended Offer</span><b><i></i>Eligible</b></header><div class=\"ds-choice\"><div><h2>Headphone Zone</h2><p>Sold by Headphone Zone</p></div><strong><small>Confirmed total</small>₹17,990</strong></div><p class=\"ds-reason\">✓ <span><b>Best evidenced remedy.</b> Exact policy and price still attached.</span></p><footer><span><small>Change of mind</small><b>Money back</b></span><span><small>Remedy window</small><b>7 days</b></span><span><small>Evidence</small><b>Current</b></span></footer></section>",
+      "css": ".ds-readout{padding:clamp(1.35rem,3vw,2.5rem);overflow:hidden;color:var(--white);background:var(--dark);border-radius:8px;font-family:var(--font-text);animation:ds-signal-resolve 220ms cubic-bezier(.22,1,.36,1) both}.ds-readout header,.ds-choice{display:flex;align-items:center;justify-content:space-between;gap:1.5rem}.ds-readout header{color:var(--dark-muted);font-size:.7rem;font-weight:670;letter-spacing:.04em;text-transform:uppercase}.ds-readout header b{display:flex;align-items:center;gap:.45rem;color:var(--signal)}.ds-readout header i{width:.4rem;height:.4rem;border-radius:50%;background:var(--signal)}.ds-choice{align-items:flex-end;margin:2rem 0 1.4rem}.ds-choice h2{margin:0 0 .35rem;font-family:var(--font-display);font-size:clamp(2.4rem,4.5vw,4.8rem);font-weight:500;letter-spacing:-.04em;line-height:.95}.ds-choice p{margin:0;color:var(--dark-muted);font-size:.8rem}.ds-choice strong{display:grid;gap:.12rem;text-align:right;font-family:var(--font-display);font-size:2rem;font-weight:560;letter-spacing:-.03em}.ds-choice strong small,.ds-readout footer small{color:var(--dark-muted);font-family:var(--font-text);font-size:.63rem;font-weight:400;letter-spacing:.03em;text-transform:uppercase}.ds-reason{display:flex;gap:.7rem;padding:.9rem 1rem;margin:0 0 1.7rem;color:#dfe4da;background:var(--dark-raised);border-radius:10px;font-size:.78rem;line-height:1.5}.ds-reason:first-letter{color:var(--signal)}.ds-readout footer{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--dark-line)}.ds-readout footer span{display:grid;gap:.35rem;padding:1.1rem 1rem 0 0;border-right:1px solid var(--dark-line)}.ds-readout footer span:last-child{border:0}.ds-readout footer b{font-size:.76rem;line-height:1.35}@keyframes ds-signal-resolve{from{filter:blur(4px) brightness(1.25);clip-path:inset(0 0 12% 0 round 8px)}to{filter:blur(0) brightness(1);clip-path:inset(0 0 0 0 round 8px)}}@media(prefers-reduced-motion:reduce){.ds-readout{animation-duration:.01ms!important}}"
+    },
+    {
+      "name": "Evidence Card",
+      "kind": "card",
+      "refersTo": "evidence-card",
+      "description": "A white, sourced record for one merchant's exact policy evidence.",
+      "html": "<article class=\"ds-evidence\"><header><h3>Headphone Zone</h3><span>Current Evidence</span></header><blockquote>“Returns are accepted within seven days in the stated condition.”</blockquote><dl><div><dt>Scope</dt><dd>category: Headphones</dd></div><div><dt>Collected</dt><dd>3 Aug 2026, 10:30</dd></div><div><dt>Fingerprint</dt><dd>sha256:example</dd></div></dl><a href=\"#evidence\">merchant.example/policy ↗</a></article>",
+      "css": ".ds-evidence{min-width:0;padding:1.15rem;overflow-wrap:anywhere;color:var(--ink);background:var(--white);border:1px solid var(--line);border-radius:12px;font-family:var(--font-text)}.ds-evidence header{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem}.ds-evidence h3{margin:0;font-family:var(--font-display);font-size:.9rem}.ds-evidence header span{color:#4e651e;font-size:.62rem;font-weight:700}.ds-evidence blockquote{padding:.7rem .8rem;margin:1rem 0;color:#414640;background:#f0f0eb;border-radius:8px;font-size:.72rem;line-height:1.55}.ds-evidence dl{margin:0}.ds-evidence dl div{margin-top:.65rem}.ds-evidence dt{color:var(--muted);font-size:.62rem;font-weight:650;letter-spacing:.035em;text-transform:uppercase}.ds-evidence dd{margin:.18rem 0 0;font-size:.7rem;line-height:1.4}.ds-evidence a{display:inline-block;margin-top:.85rem;color:#28578b;font-size:.67rem;font-weight:620;line-height:1.4}.ds-evidence a:focus-visible{outline:3px solid var(--focus);outline-offset:3px}"
+    },
+    {
+      "name": "Material Warning Acknowledgement",
+      "kind": "input",
+      "refersTo": "warning-acknowledgement",
+      "description": "One warm consent control that lists every material warning before the exact authorization is enabled.",
+      "html": "<label class=\"ds-warning\"><input type=\"checkbox\" /><span><b>I acknowledge the material warnings</b><small>• Buyer-paid return shipping may apply.<br>• The item must remain in stated condition.</small><em>Required for this exact Purchase Authorization.</em></span></label>",
+      "css": ".ds-warning{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem;color:var(--warning-ink);background:var(--warning);border:1px solid #dcc471;border-radius:10px;font-family:var(--font-text);cursor:pointer}.ds-warning:hover{background:#fff6d7}.ds-warning input{width:1.1rem;height:1.1rem;flex:0 0 auto;margin:.05rem 0 0;accent-color:#536c14}.ds-warning span{display:grid;gap:.2rem}.ds-warning b{font-size:.7rem;line-height:1.35}.ds-warning small,.ds-warning em{color:#725e24;font-size:.62rem;font-style:normal;line-height:1.35}.ds-warning em{font-weight:650}.ds-warning:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet Mastering Console",
+    "overview": "Undo makes purchase reversibility feel measured rather than promotional: a restrained aluminium work surface, calibration-like rules and dividers, and a dark readout where the recommended offer resolves as a verified signal. The experience compresses a complex evidence chain into three buyer actions while keeping every check inspectable in place.\n\nThe system is precise, calm, and candid. Luminous signal color is deliberately scarce; it marks readiness, eligibility, and the one consequential confirmation path instead of decorating the interface. The visual language rejects comparison-table wizardry, dashboard noise, sales urgency, and simulated certainty.",
+    "keyCharacteristics": [
+      "Warm-grey, aluminium-like planes separated by fine calibration lines.",
+      "One smoked-dark readout for the decision that matters most.",
+      "Restrained lime signal state and warm warning state, never a rainbow of status colors.",
+      "Licensed, bundled Manrope Variable display type paired with a highly legible local-first text stack.",
+      "Dense proof remains available through quiet disclosure, lists, and stable controls."
+    ],
+    "rules": [
+      { "name": "The Signal-Is-Meaning Rule", "body": "Use luminous signal only to communicate an affirmed, actionable state; never use it as a decorative accent or a second brand color.", "section": "colors" },
+      { "name": "The Calibration Rule", "body": "Prefer a one-pixel rule or a quiet tonal shift to a decorative border treatment. Dividers explain structure without competing with evidence.", "section": "colors" },
+      { "name": "The Readout Hierarchy Rule", "body": "Let one decision value carry the largest type inside a smoked readout; all surrounding evidence is compact, quiet, and subordinate.", "section": "typography" },
+      { "name": "The Three-Actions Rule", "body": "The visual hierarchy may expose seven checks, but it must always preserve Configure, Understand, and Authorize as the buyer's only meaningful progression.", "section": "layout" },
+      { "name": "The Flat-Readout Rule", "body": "Inside the dark decision surface, use tonal layers and hairline dividers for hierarchy; do not pile shadows onto evidence or totals.", "section": "elevation" },
+      { "name": "The Machined-Corner Rule", "body": "Use the established radius family to distinguish a working surface, a field, and a compact card; do not introduce oversized rounded capsules outside state tags.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do concentrate the chosen offer and exact total in the smoked recommendation readout.",
+      "Do keep bundled Manrope Variable first in the display token and preserve the implemented local-first display and text stacks as resilient fallbacks.",
+      "Do preserve the focus-blue outline and the reduced-motion override on every new interactive pattern.",
+      "Do use calibration lines, compact labels, exact citations, and quiet disclosure to make proof inspectable.",
+      "Do reserve luminous signal for eligibility, readiness, and the authorized path forward."
+    ],
+    "donts": [
+      "Don't turn Undo into a comparison-table wizard, a sales dashboard, or an urgency-driven checkout surface.",
+      "Don't use green signal color for generic decoration, secondary links, or unverified claims.",
+      "Don't hide warnings, evidence state, or blocked options merely to make the console look simpler.",
+      "Don't load the display face from a remote font service or remove its local-first fallbacks.",
+      "Don't replace the three-action rail with seven buyer-facing steps."
+    ]
+  }
+}

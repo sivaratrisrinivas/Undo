@@ -17,6 +17,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
     "@prava-sdk/cli": "3.1.0",
     "react": "latest",
     "react-dom": "latest"

@@ -10,28 +10,25 @@ test("one Purchase Authorization produces one completed sandbox checkout in Chro
   page.on("pageerror", (error) => consoleProblems.push(`pageerror: ${error.message}`));
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Start assessment" }).click();
-  await page.getByRole("button", { name: "Compare offers" }).click();
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.fonts.check('520 16px "Manrope Variable"'))).toBe(true);
+  expect(await page.getByRole("heading", { name: "Know the way back before you buy." }).evaluate((heading) => getComputedStyle(heading).fontFamily)).toContain("Manrope Variable");
+  await page.screenshot({ path: "/tmp/undo-setup-desktop.png", fullPage: true });
+  await page.getByRole("button", { name: "Assess this purchase" }).click();
+  await expect(page.getByRole("heading", { name: "Your Reversibility Assessment" })).toBeFocused();
   await expect(page.getByRole("heading", { name: "Offer comparison" })).toBeVisible();
-  await page.getByRole("button", { name: "Inspect evidence" }).click();
-  await page.getByRole("button", { name: "Review approval summary" }).click();
+  await expect(page.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
+  await expect(page.getByText("Prava one-time prepaid sandbox")).toBeVisible();
 
-  const authorize = page.getByRole("button", { name: "Create Purchase Authorization" });
+  const authorize = page.getByRole("button", { name: /Authorize ₹14,990 & submit once/ });
   await expect(authorize).toBeDisabled();
-  await page.getByRole("checkbox", { name: /sealed and unopened/i }).check();
-  await expect(authorize).toBeDisabled();
-  await page.getByRole("checkbox", { name: /No fee stated/i }).check();
+  await page.getByRole("checkbox", { name: /I acknowledge every Material Warning/ }).check();
   await expect(authorize).toBeEnabled();
   await page.screenshot({ path: "/tmp/undo-approval-desktop.png", fullPage: true });
   await authorize.click();
 
-  await expect(page.getByRole("heading", { name: "Checkout decision" })).toBeVisible();
-  await expect(page.getByText(/Active/)).toBeVisible();
-  await expect(page.getByText(/Submit makes exactly one Prava attempt/)).toBeVisible();
-  const submit = page.getByRole("button", { name: "Submit once through Prava" });
-  await expect(submit).toBeEnabled();
-  await submit.click();
   await expect(page.getByRole("heading", { name: "Undo Record" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Undo Record" })).toBeFocused();
   await expect(page.getByText("Purchased")).toBeVisible();
   await expect(page.getByText("sandbox-order-demo-001")).toBeVisible();
   await expect(page.getByText("Used for one checkout attempt")).toBeVisible();
@@ -42,12 +39,16 @@ test("one Purchase Authorization produces one completed sandbox checkout in Chro
 test("Approval Summary remains usable at a mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Start assessment" }).click();
-  await page.getByRole("button", { name: "Compare offers" }).click();
-  await page.getByRole("button", { name: "Inspect evidence" }).click();
-  await page.getByRole("button", { name: "Review approval summary" }).click();
+  await page.getByRole("button", { name: "Assess this purchase" }).click();
   await expect(page.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /sealed and unopened/i })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /No fee stated/i })).toBeVisible();
+  const warningAcknowledgement = page.getByRole("checkbox", { name: /I acknowledge every Material Warning/ });
+  await expect(warningAcknowledgement).toBeVisible();
+  await expect(warningAcknowledgement).toHaveAccessibleName(/Product must remain sealed and unopened\./);
+  await expect(warningAcknowledgement).toHaveAccessibleName(/No fee stated—cost uncertain\./);
+  const viewportWidth = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(viewportWidth).toEqual({ client: 320, scroll: 320 });
   await page.screenshot({ path: "/tmp/undo-approval-mobile.png", fullPage: true });
 });

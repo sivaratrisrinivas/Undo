@@ -1,21 +1,7 @@
-import type { PurchaseAuthorization, UndoRecord } from "../domain";
+import type { UndoRecord } from "../domain";
 import { EvidenceCard } from "./EvidenceCard";
 
-/** Renders the one-shot Prava checkout decision. */
-export function CheckoutStage(props: { readonly authorization: PurchaseAuthorization; readonly error: string | undefined; readonly loading: boolean; readonly onDecline: () => void; readonly onSubmit: () => void }) {
-  return (
-    <div className="stage-card compact decision-card">
-      <p className="step-kicker">Step 6 of 7</p><h2>Checkout decision</h2>
-      <div className="decision-total"><span>Maximum authorized total</span><strong>₹{props.authorization.binding.maximumTotalInr.toLocaleString("en-IN")}</strong></div>
-      <dl className="summary-list"><div><dt>Purchase Authorization</dt><dd>{props.authorization.id} · Active</dd></div><div><dt>Expires</dt><dd>{new Date(props.authorization.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Merchant / seller</dt><dd>{props.authorization.binding.merchant} / {props.authorization.binding.seller}</dd></div><div><dt>Destination</dt><dd>{props.authorization.binding.destinationReference}</dd></div><div><dt>Payment method</dt><dd>Prava one-time prepaid sandbox checkout</dd></div></dl>
-      <p className="stage-copy">Authorization is active and single-use. Submit makes exactly one Prava attempt. A timeout may mean an order exists, so Undo will record an unknown outcome and will not retry.</p>
-      {props.error !== undefined && <p className="error-message" role="alert">{props.error}</p>}
-      <div className="button-row"><button className="secondary-button" disabled={props.loading} onClick={props.onDecline} type="button">Decline purchase</button><button className="primary-button" disabled={props.loading} onClick={props.onSubmit} type="button">{props.loading ? "Submitting once…" : "Submit once through Prava"}</button></div>
-    </div>
-  );
-}
-
-/** Renders the retained, secret-free Undo Record. */
+/** Renders the retained, secret-free Undo Record after the third action. */
 export function RecordStage({ error, record }: { readonly error: string | undefined; readonly record: UndoRecord }) {
   const outcomeLabel = {
     purchased: "Purchased",
@@ -38,18 +24,52 @@ export function RecordStage({ error, record }: { readonly error: string | undefi
     outcome_unknown: "Unknown — an order may exist; no automatic retry",
   }[record.pravaStatus];
   return (
-    <div className="stage-card wide record-card">
-      <p className="step-kicker">Step 7 of 7</p>
-      <div className="record-title"><div><h2>Undo Record</h2><p className="stage-copy">Reversibility Assessment saved.</p></div><span className="outcome">{outcomeLabel}</span></div>
-      <div className="record-grid">
-        <dl className="summary-list"><div><dt>Record ID</dt><dd>{record.id}</dd></div><div><dt>Created</dt><dd>{new Date(record.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div><div><dt>Product</dt><dd>{record.product.manufacturer} {record.product.model}</dd></div><div><dt>Assessed choice</dt><dd>{record.selectedMerchant === null ? "None — assessment blocked" : `${record.selectedMerchant} / ${record.selectedSeller}`}</dd></div><div><dt>Selection</dt><dd>{record.recommendation.selection.replaceAll("_", " ")}</dd></div><div><dt>Destination reference</dt><dd>{record.destinationReference}</dd></div><div><dt>Policy Evidence</dt><dd>{record.evidence.length} snapshots retained</dd></div><div><dt>Authorization</dt><dd>{authorizationLabel}</dd></div><div><dt>Checkout</dt><dd>{checkoutLabel}</dd></div>{record.merchantOrderIdentifier !== null && <div><dt>Merchant order</dt><dd>{record.merchantOrderIdentifier}</dd></div>}</dl>
-        <div className="version-panel"><h3>Reproducibility</h3><code>{record.versions.policySchema}</code><code>{record.versions.extractionPrompt}</code><code>{record.versions.model}</code><code>{record.versions.rankingRules}</code></div>
-      </div>
+    <section className="record-surface" aria-labelledby="record-title">
+      <header className="record-header">
+        <div>
+          <div className="record-seal" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m7 16 6 6L26 8" /></svg></div>
+          <div><h1 id="record-title" tabIndex={-1}>Undo Record</h1><p>Reversibility Assessment saved without payment secrets or a full address.</p></div>
+        </div>
+        <span className={`outcome outcome-${record.outcome}`}>{outcomeLabel}</span>
+      </header>
+
       {error !== undefined && <p className="error-message" role="alert">{error}</p>}
       {record.blockingReason !== undefined && <p className="error-message" role="alert">{record.blockingReason}</p>}
+
+      <div className="record-layout">
+        <dl className="summary-list record-summary">
+          <div><dt>Record ID</dt><dd>{record.id}</dd></div>
+          <div><dt>Created</dt><dd>{new Date(record.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</dd></div>
+          <div><dt>Product</dt><dd>{record.product.manufacturer} {record.product.model}</dd></div>
+          <div><dt>Assessed choice</dt><dd>{record.selectedMerchant === null ? "None — assessment blocked" : `${record.selectedMerchant} / ${record.selectedSeller}`}</dd></div>
+          <div><dt>Selection</dt><dd>{record.recommendation.selection.replaceAll("_", " ")}</dd></div>
+          <div><dt>Destination reference</dt><dd>{record.destinationReference}</dd></div>
+          <div><dt>Policy Evidence</dt><dd>{record.evidence.length} snapshots retained</dd></div>
+          <div><dt>Authorization</dt><dd>{authorizationLabel}</dd></div>
+          <div><dt>Checkout</dt><dd>{checkoutLabel}</dd></div>
+          {record.merchantOrderIdentifier !== null && <div><dt>Merchant order</dt><dd>{record.merchantOrderIdentifier}</dd></div>}
+        </dl>
+
+        <aside className="version-panel">
+          <h2>Reproducibility</h2>
+          <p>The exact policy, extraction, model, and ranking versions retained with this decision.</p>
+          <code>{record.versions.policySchema}</code>
+          <code>{record.versions.extractionPrompt}</code>
+          <code>{record.versions.model}</code>
+          <code>{record.versions.rankingRules}</code>
+        </aside>
+      </div>
+
       {record.previousSandboxPurchase !== undefined && <aside className="warning-box"><strong>Previous Sandbox Purchase — historical only</strong><p>Original purchase: {new Date(record.previousSandboxPurchase.purchasedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</p><p>Original order: {record.previousSandboxPurchase.merchantOrderIdentifier}</p><p>This is not success for the current attempt.</p></aside>}
-      {record.evidence.length > 0 && <div className="evidence-grid">{record.evidence.map((snapshot) => <EvidenceCard key={`${snapshot.offerId}:${snapshot.fingerprint}`} snapshot={snapshot} />)}</div>}
-      <div className="assumptions"><h3>Assumptions retained</h3><ul>{record.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul></div>
-    </div>
+
+      {record.evidence.length > 0 && (
+        <details className="evidence-disclosure record-evidence">
+          <summary><span><strong>Evidence retained with this record</strong><small>{record.evidence.length} exact snapshots</small></span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg></summary>
+          <div className="evidence-grid">{record.evidence.map((snapshot) => <EvidenceCard key={`${snapshot.offerId}:${snapshot.fingerprint}`} snapshot={snapshot} />)}</div>
+        </details>
+      )}
+
+      <div className="assumptions"><h2>Assumptions retained</h2><ul>{record.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul></div>
+    </section>
   );
 }

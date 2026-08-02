@@ -1,16 +1,12 @@
 # Undo MVP product flow
 
-Undo uses one guided flow rather than a chatbot:
+Undo uses one guided flow rather than a chatbot. Seven safeguards run inside three buyer actions:
 
-1. The buyer selects the preset Sennheiser HD 560S or pastes one of its three approved Offer URLs.
-2. The buyer chooses the Delivery Destination and Premium Limit.
-3. Undo verifies manufacturer, model, variant, condition, bundle contents, warranty region, merchant, and seller before comparing the three Offers.
-4. The buyer can inspect the exact Policy Evidence and collection time behind every policy fact.
-5. The buyer approves the chosen merchant, seller, Product, quantity, destination, and maximum Confirmed Checkout Total.
-6. Undo submits one checkout attempt through Prava.
-7. Undo shows the resulting Undo Record, including Completed Purchase, confirmed failure, or Purchase Outcome Unknown.
+1. **Configure:** select the preset Sennheiser HD 560S or paste an approved Offer URL, then choose the Delivery Destination and Premium Limit.
+2. **Understand:** Undo verifies Product identity, compares the three Offers, recommends the ranking winner, and presents its Policy Evidence, collection time, Approval Summary, and Material Warnings together. Exact evidence remains available for inspection without becoming another required action.
+3. **Authorize:** approve the exact merchant, seller, Product, quantity, destination, payment method, and maximum Confirmed Checkout Total. Undo creates a single-use Purchase Authorization, submits one checkout attempt through Prava, and shows the resulting Undo Record.
 
-Unsupported Products and URLs stop at step 1 with “Not supported in this MVP.” Blocking evidence, eligibility, or price states stop before Purchase Authorization and explain why.
+The Undo Record reports Completed Purchase, confirmed failure, Purchase Outcome Unknown, or a non-purchase assessment outcome. Unsupported Products and URLs stop during Configure with “Not supported in this MVP.” Blocking evidence, eligibility, or price states stop before Purchase Authorization and explain why.
 
 ## Required technology path
 
@@ -42,4 +38,4 @@ Before approval, Undo displays one compact checklist containing:
 
 Purchase Authorization is unavailable until this summary is complete and free of blocking states.
 
-An unopened-only remedy, Unstated Cost, or another Material Warning requires a specific buyer acknowledgement before Prava approval is enabled. A generic acceptance of terms is not enough.
+An unopened-only remedy, Unstated Cost, or another Material Warning must appear by name inside the purchase-specific acknowledgement before Prava approval is enabled. One acknowledgement may cover the enumerated warnings for that exact purchase; a generic acceptance of terms is not enough.

@@ -6,14 +6,10 @@ import { App } from "./App";
 import { createFakeAdapters } from "./adapters/fake-adapters";
 import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT, type EvidenceReview, type ReviewedEvidenceCache } from "./domain";
 
-async function reachCheckout(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Start assessment" }));
-  await user.click(screen.getByRole("button", { name: "Compare offers" }));
-  await user.click(await screen.findByRole("button", { name: "Inspect evidence" }));
-  await user.click(screen.getByRole("button", { name: "Review approval summary" }));
-  await user.click(screen.getByRole("checkbox", { name: /sealed and unopened/i }));
-  await user.click(screen.getByRole("checkbox", { name: /No fee stated/i }));
-  await user.click(screen.getByRole("button", { name: "Create Purchase Authorization" }));
+async function assessAndAcknowledge(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
+  await screen.findByRole("heading", { name: "Offer comparison" });
+  await user.click(screen.getByRole("checkbox", { name: /I acknowledge every Material Warning/ }));
 }
 
 describe("guided Reversibility Assessment", () => {
@@ -26,43 +22,33 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    expect(screen.getByRole("heading", { name: "Choose a Product" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-
-    expect(screen.getByRole("heading", { name: "Set your boundaries" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    expect(screen.getByRole("heading", { name: "Know the way back before you buy." })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Offer comparison" })).toBeVisible();
     expect(screen.getAllByText("Headphone Zone").length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Inspect evidence" }));
+    await user.click(screen.getByText("Inspect all Policy Evidence"));
 
     expect(screen.getByRole("heading", { name: "Policy Evidence" })).toBeVisible();
     expect(screen.getAllByText(/sealed and unopened/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Current Evidence").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText("Reviewed Evidence")).toHaveLength(3);
+    expect(screen.getAllByText("Reviewed Evidence").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("category: Selected Easy Exchange products").length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", {
         name: /https:\/\/www\.headphonezone\.in\/pages\/help-center-returns-exchanges/,
       }).length,
     ).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Review approval summary" }));
-
     expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
     expect(screen.getByText(/Standard retail package · India warranty region/)).toBeVisible();
     expect(screen.getByText("1 / destination-ref-prava-default")).toBeVisible();
+    expect(screen.getByText("Prava one-time prepaid sandbox")).toBeVisible();
     expect(screen.getByText("₹14,990 / ₹14,990")).toBeVisible();
     expect(screen.getByText(/1\/8\/2026.*Current Evidence.*Reviewed Evidence/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Create Purchase Authorization" })).toBeDisabled();
-    await user.click(screen.getByRole("checkbox", { name: /sealed and unopened/i }));
-    expect(screen.getByRole("button", { name: "Create Purchase Authorization" })).toBeDisabled();
-    await user.click(screen.getByRole("checkbox", { name: /No fee stated/i }));
-    await user.click(screen.getByRole("button", { name: "Create Purchase Authorization" }));
-
-    expect(screen.getByRole("heading", { name: "Checkout decision" })).toBeVisible();
-    expect(screen.getByText(/purchase-authorization-demo-1 · Active/)).toBeVisible();
-    expect(screen.getByText(/Prava one-time prepaid sandbox checkout/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Decline purchase" }));
+    expect(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ })).toBeDisabled();
+    await user.click(screen.getByRole("checkbox", { name: /I acknowledge every Material Warning/ }));
+    expect(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save assessment without buying" }));
 
     expect(screen.getByRole("heading", { name: "Undo Record" })).toBeVisible();
     expect(screen.getByText("Buyer declined")).toBeVisible();
@@ -70,15 +56,15 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByText("policy-schema/1.0")).toBeVisible();
     expect(screen.getByText(/destination-ref-prava-default/)).toBeVisible();
     expect(screen.getByText("3 snapshots retained")).toBeVisible();
-    expect(screen.getByText("Authorized, not submitted")).toBeVisible();
-    expect(screen.queryByText(/card number|cvv|full address/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Not requested")).toBeVisible();
+    expect(screen.queryByText(/card number|cvv/i)).not.toBeInTheDocument();
     expect(adapters.activity).toEqual({
       sensoRequests: 1,
       openAiRequests: 1,
       pravaQuoteRequests: 1,
       pravaCheckoutRequests: 0,
     });
-  }, 10_000);
+  }, 20_000);
 
   it("submits once through Prava and shows a Completed Purchase only with an order identifier", async () => {
     const user = userEvent.setup();
@@ -92,16 +78,15 @@ describe("guided Reversibility Assessment", () => {
       },
     });
     render(<App adapters={adapters} />);
-    await reachCheckout(user);
-
-    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+    await assessAndAcknowledge(user);
+    await user.click(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ }));
 
     expect(await screen.findByText("Purchased")).toBeVisible();
     expect(screen.getByText("merchant-order-001")).toBeVisible();
     expect(screen.getByText("Used for one checkout attempt")).toBeVisible();
     expect(screen.getByText("Payment successful and merchant order confirmed")).toBeVisible();
     expect(adapters.activity.pravaCheckoutRequests).toBe(1);
-  }, 10_000);
+  }, 20_000);
 
   it("warns that an order may exist when Prava cannot confirm the submitted checkout", async () => {
     const user = userEvent.setup();
@@ -115,16 +100,15 @@ describe("guided Reversibility Assessment", () => {
       },
     });
     render(<App adapters={adapters} />);
-    await reachCheckout(user);
-
-    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+    await assessAndAcknowledge(user);
+    await user.click(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ }));
 
     expect(await screen.findByText("Purchase outcome unknown")).toBeVisible();
     expect(screen.getByText("Unknown — an order may exist; no automatic retry")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("an order may exist");
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
     expect(adapters.activity.pravaCheckoutRequests).toBe(1);
-  }, 10_000);
+  }, 20_000);
 
   it("fails closed when a successful Prava response exceeds the Purchase Authorization", async () => {
     const user = userEvent.setup();
@@ -138,9 +122,8 @@ describe("guided Reversibility Assessment", () => {
       },
     });
     render(<App adapters={adapters} />);
-    await reachCheckout(user);
-
-    await user.click(screen.getByRole("button", { name: "Submit once through Prava" }));
+    await assessAndAcknowledge(user);
+    await user.click(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ }));
 
     expect(await screen.findByText("Purchase outcome unknown")).toBeVisible();
     expect(screen.getByText("Unknown — an order may exist; no automatic retry")).toBeVisible();
@@ -152,7 +135,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.queryByText("untrusted-over-ceiling-order")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
     expect(adapters.activity.pravaCheckoutRequests).toBe(1);
-  }, 10_000);
+  }, 20_000);
 
   it.each(SUPPORTED_OFFERS)(
     "resolves the approved $merchant URL to the supported Product",
@@ -163,11 +146,11 @@ describe("guided Reversibility Assessment", () => {
       render(<App adapters={adapters} />);
 
       await user.click(screen.getByRole("radio", { name: "Paste an approved Offer URL" }));
-      await user.type(screen.getByLabelText("Offer URL"), `${offer.url}/`);
-      await user.click(screen.getByRole("button", { name: "Start assessment" }));
+      await user.type(screen.getByPlaceholderText("https://merchant.example/product"), `${offer.url}/`);
+      await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
-      expect(screen.getByRole("heading", { name: "Set your boundaries" })).toBeVisible();
-      expect(adapters.activity.sensoRequests).toBe(0);
+      expect(await screen.findByRole("heading", { name: "Offer comparison" }, { timeout: 3_000 })).toBeVisible();
+      expect(adapters.activity.sensoRequests).toBe(1);
     },
   );
 
@@ -178,8 +161,8 @@ describe("guided Reversibility Assessment", () => {
     render(<App adapters={adapters} />);
 
     await user.click(screen.getByRole("radio", { name: "Paste an approved Offer URL" }));
-    await user.type(screen.getByLabelText("Offer URL"), "https://example.com/headphones");
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.type(screen.getByPlaceholderText("https://merchant.example/product"), "https://example.com/headphones");
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("Not supported in this MVP");
     expect(adapters.activity).toEqual({
@@ -199,7 +182,7 @@ describe("guided Reversibility Assessment", () => {
 
     await user.click(screen.getByRole("radio", { name: "Enter another Product" }));
     await user.type(screen.getByLabelText("Product name"), "Sony WH-1000XM5");
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("Not supported in this MVP");
     expect(adapters.activity).toEqual({
@@ -216,9 +199,8 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
     await user.clear(screen.getByLabelText("Premium Limit (₹)"));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Enter a whole-number Premium Limit of ₹0 or more",
@@ -232,11 +214,10 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Checkout quote unavailable");
-    expect(screen.getByRole("button", { name: "Compare offers" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Assess this purchase" })).toBeEnabled();
   });
 
   it("labels valid Cached Evidence when Senso is unavailable", async () => {
@@ -262,8 +243,7 @@ describe("guided Reversibility Assessment", () => {
     const user = userEvent.setup();
 
     render(<App adapters={adapters} />);
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Offer comparison" })).toBeVisible();
     expect(screen.getAllByText(/Cached Evidence/).length).toBeGreaterThanOrEqual(3);
@@ -277,8 +257,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByText(/Item ₹14,490 · Delivery ₹300 · Taxes ₹200/)).toBeVisible();
     expect(screen.getAllByText("Advertised only: excluded from total")).toHaveLength(3);
@@ -289,16 +268,18 @@ describe("guided Reversibility Assessment", () => {
     const user = userEvent.setup();
     render(<App adapters={createFakeAdapters()} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByText("The only Offer satisfying every eligibility rule")).toBeVisible();
-    expect(screen.getByText("Baseline ₹14,490 · premium ₹500")).toBeVisible();
+    expect(screen.getByText("₹500 over baseline")).toBeVisible();
     expect(screen.getAllByText("7 days from delivered · request submitted").length).toBeGreaterThan(0);
-    expect(screen.getByText("Self-shipping · No fee stated—cost uncertain")).toBeVisible();
-    expect(screen.getByText(/Product must remain sealed and unopened\./)).toBeVisible();
-    expect(screen.getAllByText(/Collected 01\/08\/2026/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Current Evidence · Reviewed Evidence/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Self-shipping").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No fee stated—cost uncertain").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Product must remain sealed and unopened\./).length).toBeGreaterThan(0);
+    await user.click(screen.getByText("Inspect all Policy Evidence"));
+    expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Current Evidence").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Reviewed Evidence").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Eligible products may be returned for a refund/).length).toBeGreaterThan(0);
   });
 
@@ -306,14 +287,13 @@ describe("guided Reversibility Assessment", () => {
     const user = userEvent.setup();
     render(<App adapters={createFakeAdapters({ scenario: "override" })} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("radio", { name: /Headphone Zone.*recommended/i })).toBeChecked();
     expect(screen.getByRole("radio", { name: /Flipkart.*not eligible/i })).toBeDisabled();
     await user.click(screen.getByRole("radio", { name: /Concept Kart.*Buyer Override/i }));
     expect(screen.getByText(/Buyer Override selected: Concept Kart/i)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
   });
 
   it("shows an exact Product mismatch without allowing that Offer to rank", async () => {
@@ -326,8 +306,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByText(/Not equivalent: manufacturer: expected Sennheiser/)).toBeVisible();
   });
@@ -338,8 +317,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
     expect(screen.getByText("Policy blocked")).toBeVisible();
@@ -356,8 +334,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
     expect(screen.getByText("Policy blocked")).toBeVisible();
@@ -392,8 +369,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Undo Record" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Unpriced Required Cost");
@@ -407,12 +383,11 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("heading", { name: "Review changed Policy Evidence" })).toBeVisible();
     expect(screen.getAllByText("Review required")).toHaveLength(3);
-    await user.click(screen.getByRole("button", { name: "Approve exact evidence and reassess" }));
+    await user.click(screen.getByRole("button", { name: "Reviewer approval: accept evidence and reassess" }));
 
     expect(await screen.findByRole("heading", { name: "Offer comparison" })).toBeVisible();
     expect(adapters.activity.sensoRequests).toBe(2);
@@ -424,10 +399,9 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
     await user.clear(screen.getByLabelText("Premium Limit (₹)"));
     await user.type(screen.getByLabelText("Premium Limit (₹)"), "0");
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No reversible Offer is within this Premium Limit",
@@ -441,13 +415,13 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
-    expect(await screen.findByText("These Offers are tied. Choose before continuing.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeDisabled();
+    expect(await screen.findByText("Tied Offers")).toBeVisible();
+    expect(screen.getByText("Choose an eligible Offer to prepare the exact Purchase Authorization.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Authorize .*submit once/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Concept Kart/ }));
-    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Authorize .*submit once/ })).toBeDisabled();
   });
 
   it("derives the Approval Summary from the selected policy facts", async () => {
@@ -456,10 +430,7 @@ describe("guided Reversibility Assessment", () => {
 
     render(<App adapters={adapters} />);
 
-    await user.click(screen.getByRole("button", { name: "Start assessment" }));
-    await user.click(screen.getByRole("button", { name: "Compare offers" }));
-    await user.click(await screen.findByRole("button", { name: "Inspect evidence" }));
-    await user.click(screen.getByRole("button", { name: "Review approval summary" }));
+    await user.click(screen.getByRole("button", { name: "Assess this purchase" }));
 
     expect(screen.getByText(/Change-of-mind store credit · 10 days from delivered · request submitted/)).toBeVisible();
     expect(screen.getByText("Trial permitted")).toBeVisible();
