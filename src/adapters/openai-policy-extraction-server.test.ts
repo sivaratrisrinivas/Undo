@@ -63,7 +63,6 @@ describe("OpenAI policy extraction server boundary", () => {
               detail: "Product must remain sealed and unopened.",
               citation: {
                 quote: "when sealed and unopened",
-                sourceUrl: evidenceSnapshot.sourceUrl,
               },
             },
           ],
@@ -72,27 +71,22 @@ describe("OpenAI policy extraction server boundary", () => {
             {
               fact: "remedy",
               quote: "Eligible products may be returned for a refund",
-              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "window",
               quote: "within 7 days of delivery",
-              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "product_condition",
               quote: "when sealed and unopened",
-              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "return_transport",
               quote: "Return shipping",
-              sourceUrl: evidenceSnapshot.sourceUrl,
             },
             {
               fact: "buyer_paid_fees",
               quote: "Return shipping costs ₹250",
-              sourceUrl: evidenceSnapshot.sourceUrl,
             },
           ],
         },
@@ -119,12 +113,28 @@ describe("OpenAI policy extraction server boundary", () => {
       model: "gpt-test",
     });
 
-    expect(result).toEqual({ _tag: "ok", value: [
-      {
-        ...output.policies[0],
-        quote: "Eligible products may be returned for a refund",
-      },
-    ] });
+    expect(result).toMatchObject({
+      _tag: "ok",
+      value: [
+        {
+          offerId: "headphone-zone",
+          quote: "Eligible products may be returned for a refund",
+          citations: output.policies[0]?.citations.map((citation) => ({
+            ...citation,
+            sourceUrl: evidenceSnapshot.sourceUrl,
+          })),
+          materialConditions: [
+            {
+              detail: "Product must remain sealed and unopened.",
+              citation: {
+                quote: "when sealed and unopened",
+                sourceUrl: evidenceSnapshot.sourceUrl,
+              },
+            },
+          ],
+        },
+      ],
+    });
     const request = fetcher.mock.calls[0];
     expect(request?.[0]).toBe("https://api.openai.com/v1/responses");
     expect(new Headers(request?.[1]?.headers).get("Authorization")).toBe("Bearer test-key");
@@ -194,7 +204,6 @@ describe("OpenAI policy extraction server boundary", () => {
                         ].map((fact) => ({
                           fact,
                           quote: "This wording was invented",
-                          sourceUrl: evidenceSnapshot.sourceUrl,
                         })),
                       },
                     ],

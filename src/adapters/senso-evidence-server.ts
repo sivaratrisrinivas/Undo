@@ -5,76 +5,75 @@ export type SensoOfficialSource = {
   readonly merchant: string;
   readonly sourceUrl: string;
   readonly scope: EvidenceSnapshot["scope"];
-  readonly contentIds: ReadonlyArray<string>;
+  readonly kbNodeIds: ReadonlyArray<string>;
 };
 
-type SensoSearchResult = {
-  readonly content_id: string;
-  readonly chunk_index: number;
-  readonly chunk_text: string;
+type SensoRawContent = {
+  readonly text: string;
+  readonly updatedAt: string;
 };
 
 function isSupportedProduct(product: Product): boolean {
   return JSON.stringify(product) === JSON.stringify(SUPPORTED_PRODUCT);
 }
 
-function searchResults(value: unknown): ReadonlyArray<SensoSearchResult> {
-  if (typeof value !== "object" || value === null) return [];
-  const results = (value as { results?: unknown }).results;
-  if (!Array.isArray(results)) return [];
-  return results.filter((result): result is SensoSearchResult => {
-    if (typeof result !== "object" || result === null) return false;
-    const candidate = result as Record<string, unknown>;
-    return (
-      typeof candidate.content_id === "string" &&
-      typeof candidate.chunk_index === "number" &&
-      Number.isSafeInteger(candidate.chunk_index) &&
-      candidate.chunk_index >= 0 &&
-      typeof candidate.chunk_text === "string"
-    );
-  });
+function parseSensoRawContent(value: unknown): SensoRawContent {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Senso returned invalid raw Policy Evidence");
+  }
+  // SAFETY: The object/null/array checks above establish a JSON object boundary.
+  const content = value as Record<string, unknown>;
+  if (
+    typeof content.id !== "string" ||
+    content.type !== "raw" ||
+    content.processing_status !== "complete" ||
+    typeof content.updated_at !== "string" ||
+    !Number.isFinite(Date.parse(content.updated_at)) ||
+    typeof content.text !== "string" ||
+    content.text.trim() === ""
+  ) {
+    throw new Error("Senso returned invalid raw Policy Evidence");
+  }
+  return { text: content.text, updatedAt: content.updated_at };
 }
 
-/** Server-only Senso query used by the `/api/policy-evidence` route. */
+/** Server-only Senso retrieval used by the `/api/policy-evidence` route. */
 export async function retrievePolicyEvidenceFromSenso(
   product: Product,
   options: {
     readonly apiKey: string;
     readonly sources: ReadonlyArray<SensoOfficialSource>;
     readonly fetcher?: typeof fetch;
-    readonly now?: () => string;
   },
 ): Promise<{ readonly documents: ReadonlyArray<Omit<EvidenceSnapshot, "fingerprint" | "retrievedVia" | "retrievalState">> }> {
   if (!isSupportedProduct(product)) throw new Error("Unsupported Product");
   if (options.apiKey.trim() === "") throw new Error("SENSO_API_KEY is not configured");
   const fetcher = options.fetcher ?? fetch;
-  const collectedAt = (options.now ?? (() => new Date().toISOString()))();
   const documents = await Promise.all(
     options.sources.map(async (source) => {
-      if (source.contentIds.length === 0) {
-        throw new Error(`Senso content IDs are not configured for ${source.merchant}`);
+      if (source.kbNodeIds.length === 0) {
+        throw new Error(`Senso KB node IDs are not configured for ${source.merchant}`);
       }
-      const response = await fetcher("https://apiv2.senso.ai/api/v1/org/search/context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": options.apiKey },
-        body: JSON.stringify({
-          query: `Return, refund, exchange, replacement, condition, window, transport, and fee terms for ${source.merchant} Sennheiser HD 560S`,
-          max_results: 20,
-          content_ids: source.contentIds,
-          require_scoped_ids: true,
+      const contents = await Promise.all(
+        source.kbNodeIds.map(async (nodeId) => {
+          const response = await fetcher(
+            `https://apiv2.senso.ai/api/v1/org/kb/nodes/${encodeURIComponent(nodeId)}/content`,
+            { headers: { "X-API-Key": options.apiKey } },
+          );
+          if (!response.ok) throw new Error(`Senso content retrieval returned ${response.status}`);
+          return parseSensoRawContent(await response.json());
         }),
-      });
-      if (!response.ok) throw new Error(`Senso search returned ${response.status}`);
-      const results = searchResults(await response.json()).filter((result) =>
-        source.contentIds.includes(result.content_id),
-      ).sort((left, right) => left.chunk_index - right.chunk_index);
+      );
+      const oldestCaptureTime = Math.min(
+        ...contents.map((content) => Date.parse(content.updatedAt)),
+      );
       return {
         offerId: source.offerId,
         merchant: source.merchant,
         sourceUrl: source.sourceUrl,
         scope: source.scope,
-        collectedAt,
-        exactText: results.map((result) => result.chunk_text).join("\n\n"),
+        collectedAt: new Date(oldestCaptureTime).toISOString(),
+        exactText: contents.map((content) => content.text).join("\n\n"),
       };
     }),
   );

@@ -4,56 +4,62 @@ import { SUPPORTED_PRODUCT } from "../domain";
 import { retrievePolicyEvidenceFromSenso } from "./senso-evidence-server";
 
 describe("Senso evidence backend", () => {
-  it("queries Senso for the configured official source and returns exact chunks", async () => {
+  it("retrieves complete configured KB documents in order and uses the oldest capture time", async () => {
     const requests: Request[] = [];
+    const responses = new Map([
+      [
+        "hpz-policy-node-1",
+        {
+          id: "hpz-content-1",
+          type: "raw",
+          processing_status: "complete",
+          updated_at: "2026-08-02T09:00:00.000Z",
+          text: "Exact official return wording.",
+        },
+      ],
+      [
+        "hpz-policy-node-2",
+        {
+          id: "hpz-content-2",
+          type: "raw",
+          processing_status: "complete",
+          updated_at: "2026-08-02T08:00:00.000Z",
+          text: "More exact official wording.",
+        },
+      ],
+    ]);
     const fetcher: typeof fetch = (input, init) => {
-      requests.push(new Request(input, init));
+      const request = new Request(input, init);
+      requests.push(request);
+      const nodeId = new URL(request.url).pathname.split("/").at(-2);
       return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            results: [
-              {
-                content_id: "hpz-policy",
-                chunk_index: 1,
-                chunk_text: "More exact official wording.",
-              },
-              { content_id: "unrelated", chunk_index: 0, chunk_text: "Do not include this." },
-              {
-                content_id: "hpz-policy",
-                chunk_index: 0,
-                chunk_text: "Exact official return wording.",
-              },
-            ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(JSON.stringify(responses.get(nodeId ?? "")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
       );
     };
 
     const response = await retrievePolicyEvidenceFromSenso(SUPPORTED_PRODUCT, {
       apiKey: "test-key",
       fetcher,
-      now: () => "2026-08-02T09:00:00.000Z",
       sources: [
         {
           offerId: "headphone-zone",
           merchant: "Headphone Zone",
           sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
           scope: { kind: "product", value: "Sennheiser HD 560S" },
-          contentIds: ["hpz-policy"],
+          kbNodeIds: ["hpz-policy-node-1", "hpz-policy-node-2"],
         },
       ],
     });
 
-    expect(requests[0]?.url).toBe("https://apiv2.senso.ai/api/v1/org/search/context");
-    expect(requests[0]?.headers.get("X-API-Key")).toBe("test-key");
-    await expect(requests[0]?.json()).resolves.toEqual({
-      query:
-        "Return, refund, exchange, replacement, condition, window, transport, and fee terms for Headphone Zone Sennheiser HD 560S",
-      max_results: 20,
-      content_ids: ["hpz-policy"],
-      require_scoped_ids: true,
-    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://apiv2.senso.ai/api/v1/org/kb/nodes/hpz-policy-node-1/content",
+      "https://apiv2.senso.ai/api/v1/org/kb/nodes/hpz-policy-node-2/content",
+    ]);
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    expect(requests.every((request) => request.headers.get("X-API-Key") === "test-key")).toBe(true);
     expect(response).toEqual({
       documents: [
         {
@@ -61,14 +67,14 @@ describe("Senso evidence backend", () => {
           merchant: "Headphone Zone",
           sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
           scope: { kind: "product", value: "Sennheiser HD 560S" },
-          collectedAt: "2026-08-02T09:00:00.000Z",
+          collectedAt: "2026-08-02T08:00:00.000Z",
           exactText: "Exact official return wording.\n\nMore exact official wording.",
         },
       ],
     });
   });
 
-  it("fails before searching when an official source has no configured Senso content IDs", async () => {
+  it("fails before retrieval when an official source has no configured Senso KB node IDs", async () => {
     let requestCount = 0;
     const fetcher: typeof fetch = () => {
       requestCount += 1;
@@ -85,11 +91,33 @@ describe("Senso evidence backend", () => {
             merchant: "Headphone Zone",
             sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
             scope: { kind: "product", value: "Sennheiser HD 560S" },
-            contentIds: [],
+            kbNodeIds: [],
           },
         ],
       }),
-    ).rejects.toThrow("Senso content IDs are not configured for Headphone Zone");
+    ).rejects.toThrow("Senso KB node IDs are not configured for Headphone Zone");
     expect(requestCount).toBe(0);
+  });
+
+  it.each([
+    ["missing text", { id: "raw-1", type: "raw", processing_status: "complete", updated_at: "2026-08-02T08:00:00.000Z" }],
+    ["unfinished processing", { id: "raw-1", type: "raw", processing_status: "processing", updated_at: "2026-08-02T08:00:00.000Z", text: "Policy" }],
+    ["invalid capture time", { id: "raw-1", type: "raw", processing_status: "complete", updated_at: "not-a-date", text: "Policy" }],
+  ])("rejects %s from the Senso raw-content boundary", async (_case, payload) => {
+    await expect(
+      retrievePolicyEvidenceFromSenso(SUPPORTED_PRODUCT, {
+        apiKey: "test-key",
+        fetcher: () => Promise.resolve(Response.json(payload)),
+        sources: [
+          {
+            offerId: "headphone-zone",
+            merchant: "Headphone Zone",
+            sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
+            scope: { kind: "product", value: "Sennheiser HD 560S" },
+            kbNodeIds: ["hpz-policy-node"],
+          },
+        ],
+      }),
+    ).rejects.toThrow("Senso returned invalid raw Policy Evidence");
   });
 });

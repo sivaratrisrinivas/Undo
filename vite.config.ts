@@ -33,19 +33,19 @@ function parseProduct(value: unknown): Product {
   return SUPPORTED_PRODUCT;
 }
 
-function contentIds(value: string | undefined): ReadonlyArray<string> {
+function kbNodeIds(value: string | undefined): ReadonlyArray<string> {
   return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function sensoEvidencePlugin(env: Record<string, string>): Plugin {
-  const contentIdsByOffer = {
-    "headphone-zone": contentIds(env.SENSO_HEADPHONE_ZONE_CONTENT_IDS),
-    "concept-kart": contentIds(env.SENSO_CONCEPT_KART_CONTENT_IDS),
-    flipkart: contentIds(env.SENSO_FLIPKART_CONTENT_IDS),
+  const kbNodeIdsByOffer = {
+    "headphone-zone": kbNodeIds(env.SENSO_HEADPHONE_ZONE_KB_NODE_IDS),
+    "concept-kart": kbNodeIds(env.SENSO_CONCEPT_KART_KB_NODE_IDS),
+    flipkart: kbNodeIds(env.SENSO_FLIPKART_KB_NODE_IDS),
   } as const;
   const sources: ReadonlyArray<SensoOfficialSource> = OFFICIAL_EVIDENCE_SOURCES.map((source) => ({
     ...source,
-    contentIds: contentIdsByOffer[source.offerId],
+    kbNodeIds: kbNodeIdsByOffer[source.offerId],
   }));
   return {
     name: "undo-senso-policy-evidence",
@@ -120,7 +120,7 @@ function openAiPolicyExtractionPlugin(env: Record<string, string>): Plugin {
               response.end(JSON.stringify({ error: "Invalid Policy Evidence request" }));
               return;
             }
-            const model = env.OPENAI_POLICY_MODEL || "gpt-5.6";
+            const model = env.OPENAI_POLICY_MODEL || "gpt-5.6-sol";
             const result = await extractPoliciesWithOpenAi(evidence, {
               apiKey,
               model,

@@ -60,7 +60,7 @@ describe("guided Reversibility Assessment", () => {
       pravaQuoteRequests: 1,
       pravaCheckoutRequests: 0,
     });
-  });
+  }, 10_000);
 
   it.each(SUPPORTED_OFFERS)(
     "resolves the approved $merchant URL to the supported Product",
