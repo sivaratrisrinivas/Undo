@@ -2,7 +2,7 @@ import react from "@vitejs/plugin-react";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
-import { retrievePolicyEvidenceFromSenso, type SensoOfficialSource } from "./src/adapters/senso-evidence-server.ts";
+import { parseKbNodeIds, retrievePolicyEvidenceFromSenso, type SensoOfficialSource } from "./src/adapters/senso-evidence-server.ts";
 import {
   extractPoliciesWithOpenAi,
   openAiApiKeyFrom,
@@ -31,10 +31,6 @@ function parseProduct(value: unknown): Product {
     throw new Error("Unsupported Product");
   }
   return SUPPORTED_PRODUCT;
-}
-
-function parseKbNodeIds(value: string | undefined): ReadonlyArray<string> {
-  return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function sensoEvidencePlugin(env: Record<string, string>): Plugin {

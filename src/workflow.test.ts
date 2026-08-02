@@ -72,6 +72,7 @@ function makeAdapters(
   );
   return {
     policyContract: { purchaseEnabled: () => true },
+    evidenceApplicability: { appliesToProduct: () => true },
     senso: { retrieveEvidence: () => Promise.resolve({ _tag: "ok", value: snapshots }) },
     openAi: {
       modelVersion: () => "fake-openai/test",

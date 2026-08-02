@@ -244,6 +244,7 @@ export function createFakeAdapters(options?: {
   return {
     activity,
     policyContract: { purchaseEnabled: () => true },
+    evidenceApplicability: { appliesToProduct: () => true },
     senso: {
       retrieveEvidence() {
         activity.sensoRequests += 1;

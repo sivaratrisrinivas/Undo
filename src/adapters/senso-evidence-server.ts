@@ -5,6 +5,7 @@ export type SensoOfficialSource = {
   readonly merchant: string;
   readonly sourceUrl: string;
   readonly scope: EvidenceSnapshot["scope"];
+  readonly requiredTextMarkers: ReadonlyArray<string>;
   readonly kbNodeIds: ReadonlyArray<string>;
 };
 
@@ -14,6 +15,11 @@ type SensoRawContent = {
 };
 
 const MAX_CAPTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/** Parses a comma-separated list of configured Senso KB node IDs. */
+export function parseKbNodeIds(value: string | undefined): ReadonlyArray<string> {
+  return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
+}
 
 function isSupportedProduct(product: Product): boolean {
   return JSON.stringify(product) === JSON.stringify(SUPPORTED_PRODUCT);
@@ -74,13 +80,17 @@ export async function retrievePolicyEvidenceFromSenso(
       const oldestCaptureTime = Math.min(
         ...contents.map((content) => Date.parse(content.updatedAt)),
       );
+      const exactText = contents.map((content) => content.text).join("\n\n");
+      if (!source.requiredTextMarkers.every((marker) => exactText.includes(marker))) {
+        throw new Error(`Senso returned Policy Evidence with invalid provenance for ${source.merchant}`);
+      }
       return {
         offerId: source.offerId,
         merchant: source.merchant,
         sourceUrl: source.sourceUrl,
         scope: source.scope,
         collectedAt: new Date(oldestCaptureTime).toISOString(),
-        exactText: contents.map((content) => content.text).join("\n\n"),
+        exactText,
       };
     }),
   );

@@ -216,15 +216,30 @@ export const SUPPORTED_OFFERS: ReadonlyArray<Offer> = [
 
 /** Curated official merchant sources accepted for Policy Evidence retrieval. */
 export const OFFICIAL_EVIDENCE_SOURCES = [
-  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "category", value: "Selected Easy Exchange products" } },
-  { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/replacement-return-policy", scope: { kind: "category", value: "Headphones" } },
-  { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" } },
+  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "category", value: "Selected Easy Exchange products" }, applicability: "unverified", requiredTextMarkers: ["# Returns & Exchanges", "Easy Exchange"] },
+  { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/replacement-return-policy", scope: { kind: "category", value: "Headphones" }, applicability: "confirmed", requiredTextMarkers: ["# Replacement Policy", "ten-day replacement policy"] },
+  { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" }, applicability: "confirmed", requiredTextMarkers: ["# Order Cancellation and Return Policy", "# Returns Policy"] },
 ] as const satisfies ReadonlyArray<{
   readonly offerId: Offer["id"];
   readonly merchant: string;
   readonly sourceUrl: string;
   readonly scope: EvidenceSnapshot["scope"];
+  readonly applicability: "confirmed" | "unverified";
+  readonly requiredTextMarkers: ReadonlyArray<string>;
 }>;
+
+/** Confirms that a curated source is known to apply to the supported Product. */
+export function officialEvidenceAppliesToSupportedProduct(snapshot: EvidenceSnapshot): boolean {
+  return OFFICIAL_EVIDENCE_SOURCES.some(
+    (source) =>
+      source.offerId === snapshot.offerId &&
+      source.merchant === snapshot.merchant &&
+      source.sourceUrl === snapshot.sourceUrl &&
+      source.scope.kind === snapshot.scope.kind &&
+      source.scope.value === snapshot.scope.value &&
+      source.applicability === "confirmed",
+  );
+}
 
 /** Resolves the preset or an approved Offer URL without performing external work. */
 export function resolveSupportedProduct(input: string): Product | undefined {

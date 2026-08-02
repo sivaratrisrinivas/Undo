@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parsePremiumLimitInr,
+  officialEvidenceAppliesToSupportedProduct,
   OFFICIAL_EVIDENCE_SOURCES,
   SUPPORTED_OFFERS,
   SUPPORTED_PRODUCT,
@@ -68,11 +69,15 @@ function adapters(
     readonly failSenso?: boolean;
     readonly failOpenAi?: boolean;
     readonly cache?: ReviewedEvidenceCache;
+    readonly evidenceApplicable?: boolean;
   },
 ): AssessmentAdapters {
   const reviewByFingerprint = new Map(reviews.map((review) => [review.fingerprint, review]));
   return {
     policyContract: { purchaseEnabled: () => true },
+    evidenceApplicability: {
+      appliesToProduct: () => options?.evidenceApplicable !== false,
+    },
     senso: {
       retrieveEvidence: () =>
         options?.failSenso === true
@@ -133,6 +138,31 @@ function adapters(
 }
 
 describe("Policy Evidence workflow", () => {
+  it("blocks evidence whose applicability to the Product is unverified", async () => {
+    const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    const headphoneZone = snapshots.find((snapshot) => snapshot.offerId === "headphone-zone");
+    const conceptKart = snapshots.find((snapshot) => snapshot.offerId === "concept-kart");
+    if (headphoneZone === undefined || conceptKart === undefined) {
+      throw new Error("Missing applicability fixtures");
+    }
+    expect(officialEvidenceAppliesToSupportedProduct(headphoneZone)).toBe(false);
+    expect(officialEvidenceAppliesToSupportedProduct(conceptKart)).toBe(true);
+
+    const result = await new AssessmentWorkflow(
+      adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
+        evidenceApplicable: false,
+      }),
+    ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
+
+    expect(result).toMatchObject({
+      _tag: "err",
+      error: {
+        reason: "blocked_by_policy",
+        message: "Policy Evidence is incomplete for one or more Offers",
+      },
+    });
+  });
+
   it("creates a blocked Undo Record naming OpenAI when extraction fails without a valid cache", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
     const policies = SUPPORTED_OFFERS.map((offer) => policyFor(offer.id));

@@ -16,6 +16,9 @@ import { OFFICIAL_EVIDENCE_SOURCES, POLICY_FACTS, SUPPORTED_OFFERS } from "./dom
 /** External capabilities required to perform a Reversibility Assessment. */
 export type AssessmentAdapters = {
   readonly policyContract: { purchaseEnabled(): boolean };
+  readonly evidenceApplicability: {
+    appliesToProduct(product: Product, snapshot: EvidenceSnapshot): boolean;
+  };
   readonly senso: {
     retrieveEvidence(product: Product): Promise<AdapterResult<ReadonlyArray<EvidenceSnapshot>>>;
   };
@@ -197,7 +200,7 @@ export class AssessmentWorkflow {
       reviews = new Map(cache.reviews.map((review) => [review.fingerprint, review]));
     } else {
       evidence = evidenceResult.value;
-      if (!this.hasCompleteEvidence(evidence)) {
+      if (!this.hasCompleteEvidence(product, evidence)) {
         return this.policyBlock(
           product,
           premiumLimitInr,
@@ -211,7 +214,7 @@ export class AssessmentWorkflow {
         const cache = await this.adapters.evidence.loadCache(product);
         const cacheMatchesCurrentEvidence =
           cache !== undefined &&
-          this.hasCompleteEvidence(cache.snapshots) &&
+          this.hasCompleteEvidence(product, cache.snapshots) &&
           evidence.every((snapshot) =>
             cache.snapshots.some(
               (cached) =>
@@ -253,7 +256,7 @@ export class AssessmentWorkflow {
       }
     }
 
-    if (!this.hasCompleteEvidence(evidence)) {
+    if (!this.hasCompleteEvidence(product, evidence)) {
       return this.policyBlock(
         product,
         premiumLimitInr,
@@ -476,7 +479,7 @@ export class AssessmentWorkflow {
     };
   }
 
-  private hasCompleteEvidence(evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
+  private hasCompleteEvidence(product: Product, evidence: ReadonlyArray<EvidenceSnapshot>): boolean {
     return SUPPORTED_OFFERS.every((offer) => {
       const snapshots = evidence.filter((snapshot) => snapshot.offerId === offer.id);
       const snapshot = snapshots[0];
@@ -491,6 +494,7 @@ export class AssessmentWorkflow {
             source.scope.kind === snapshot.scope.kind &&
             source.scope.value === snapshot.scope.value,
         ) &&
+        this.adapters.evidenceApplicability.appliesToProduct(product, snapshot) &&
         snapshot.exactText.trim() !== "" &&
         snapshot.fingerprint.trim() !== "" &&
         Number.isFinite(Date.parse(snapshot.collectedAt)) &&
