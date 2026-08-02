@@ -50,7 +50,7 @@ describe("Senso evidence backend", () => {
           merchant: "Headphone Zone",
           sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
           scope: { kind: "category", value: "Selected Easy Exchange products" },
-          requiredTextMarkers: ["Exact official return wording."],
+          requiredTextMarkers: ["wording."],
           kbNodeIds: ["hpz-policy-node-1", "hpz-policy-node-2"],
         },
       ],
@@ -74,6 +74,28 @@ describe("Senso evidence backend", () => {
         },
       ],
     });
+  });
+
+  it("rejects a misassigned node even when another node has the expected provenance marker", async () => {
+    const payloads = [
+      { id: "correct", type: "raw", processing_status: "complete", updated_at: "2026-08-02T08:00:00.000Z", text: "Headphone Zone policy" },
+      { id: "wrong", type: "raw", processing_status: "complete", updated_at: "2026-08-02T08:00:00.000Z", text: "Unrelated merchant policy" },
+    ];
+    let responseIndex = 0;
+
+    await expect(retrievePolicyEvidenceFromSenso(SUPPORTED_PRODUCT, {
+      apiKey: "test-key",
+      fetcher: () => Promise.resolve(Response.json(payloads[responseIndex++])),
+      now: () => "2026-08-02T09:00:00.000Z",
+      sources: [{
+        offerId: "headphone-zone",
+        merchant: "Headphone Zone",
+        sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges",
+        scope: { kind: "category", value: "Selected Easy Exchange products" },
+        requiredTextMarkers: ["Headphone Zone"],
+        kbNodeIds: ["correct-node", "wrong-node"],
+      }],
+    })).rejects.toThrow("invalid provenance for Headphone Zone");
   });
 
   it("fails before retrieval when an official source has no configured Senso KB node IDs", async () => {

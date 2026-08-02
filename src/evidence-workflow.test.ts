@@ -70,6 +70,7 @@ function adapters(
     readonly failOpenAi?: boolean;
     readonly cache?: ReviewedEvidenceCache;
     readonly evidenceApplicable?: boolean;
+    readonly onExtractPolicies?: () => void;
   },
 ): AssessmentAdapters {
   const reviewByFingerprint = new Map(reviews.map((review) => [review.fingerprint, review]));
@@ -93,8 +94,9 @@ function adapters(
     },
     openAi: {
       modelVersion: () => "fake-openai/test",
-      extractPolicies: () =>
-        options?.failOpenAi === true
+      extractPolicies: () => {
+        options?.onExtractPolicies?.();
+        return options?.failOpenAi === true
           ? Promise.resolve({
               _tag: "err",
               error: {
@@ -103,7 +105,8 @@ function adapters(
                 cause: "outage",
               },
             })
-          : Promise.resolve({ _tag: "ok", value: policies }),
+          : Promise.resolve({ _tag: "ok", value: policies });
+      },
     },
     prava: {
       quoteOffers: () =>
@@ -140,6 +143,7 @@ function adapters(
 describe("Policy Evidence workflow", () => {
   it("blocks evidence whose applicability to the Product is unverified", async () => {
     const snapshots = SUPPORTED_OFFERS.map((offer) => snapshotFor(offer));
+    let extractionCalls = 0;
     const headphoneZone = snapshots.find((snapshot) => snapshot.offerId === "headphone-zone");
     const conceptKart = snapshots.find((snapshot) => snapshot.offerId === "concept-kart");
     if (headphoneZone === undefined || conceptKart === undefined) {
@@ -151,6 +155,7 @@ describe("Policy Evidence workflow", () => {
     const result = await new AssessmentWorkflow(
       adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
         evidenceApplicable: false,
+        onExtractPolicies: () => { extractionCalls += 1; },
       }),
     ).assess(SUPPORTED_PRODUCT, premiumLimit(), "destination-ref-test");
 
@@ -161,6 +166,7 @@ describe("Policy Evidence workflow", () => {
         message: "Policy Evidence is incomplete for one or more Offers",
       },
     });
+    expect(extractionCalls).toBe(0);
   });
 
   it("creates a blocked Undo Record naming OpenAI when extraction fails without a valid cache", async () => {

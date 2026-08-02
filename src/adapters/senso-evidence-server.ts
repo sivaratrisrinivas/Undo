@@ -80,10 +80,13 @@ export async function retrievePolicyEvidenceFromSenso(
       const oldestCaptureTime = Math.min(
         ...contents.map((content) => Date.parse(content.updatedAt)),
       );
-      const exactText = contents.map((content) => content.text).join("\n\n");
-      if (!source.requiredTextMarkers.every((marker) => exactText.includes(marker))) {
+      if (
+        !contents.every((content) =>
+          source.requiredTextMarkers.every((marker) => content.text.includes(marker)))
+      ) {
         throw new Error(`Senso returned Policy Evidence with invalid provenance for ${source.merchant}`);
       }
+      const exactText = contents.map((content) => content.text).join("\n\n");
       return {
         offerId: source.offerId,
         merchant: source.merchant,
