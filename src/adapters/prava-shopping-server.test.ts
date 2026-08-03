@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 
 import { SUPPORTED_OFFERS, SUPPORTED_PRODUCT } from "../domain";
 import {
   checkoutWithPrava,
+  createPravaWalletApiRunner,
   OneTimePravaCheckoutCredential,
   parsePravaCheckoutRequest,
   parsePravaQuoteRequest,
@@ -24,6 +26,37 @@ function credential() {
 }
 
 describe("Prava shopping server boundary", () => {
+  it("signs Wallet API requests without exposing the agent private key", async () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const encodedPrivateKey = privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetcher: typeof fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, init: init ?? {} });
+      return Promise.resolve(new Response(JSON.stringify({
+        success: true,
+        data: { product: { id: "product-1", merchant: "headphonezone.in", variants: [] } },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    };
+    const runner = createPravaWalletApiRunner({
+      PRAVA_AGENT_ID: "agent_demo_001",
+      PRAVA_AGENT_PRIVATE_KEY: encodedPrivateKey,
+      PRAVA_WALLET_API_URL: "https://pay-api.prava.space",
+    }, fetcher);
+
+    const result = await runner([
+      "shop", "product", "--product-id", "product-1", "--merchant", "headphonezone.in", "--json",
+    ], 5_000);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ product: { id: "product-1" } });
+    expect(calls[0]?.url).toBe("https://pay-api.prava.space/v1/wallet/shop/product");
+    const headers = new Headers(calls[0]?.init.headers);
+    expect(headers.get("x-agent-id")).toBe("agent_demo_001");
+    expect(headers.get("x-signature")).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(JSON.stringify(calls)).not.toContain(encodedPrivateKey);
+  });
+
   it("verifies exact catalog variants and returns reconciled INR checkout totals", async () => {
     const commands: Array<ReadonlyArray<string>> = [];
     const runner: PravaCommandRunner = (args) => {

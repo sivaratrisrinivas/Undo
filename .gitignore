@@ -3,7 +3,10 @@ dist/
 playwright-report/
 test-results/
 .impeccable/questions/*.log
+.agents/
+skills-lock.json
 *.tsbuildinfo
 .env
 .env.*
 !.env.example
+.vercel/

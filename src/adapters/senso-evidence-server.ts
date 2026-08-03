@@ -1,5 +1,5 @@
-import { SUPPORTED_PRODUCT, type EvidenceSnapshot, type Offer, type Product } from "../domain.ts";
-import { errorLogDetails, type PipelineLogger } from "../pipeline-logging.ts";
+import { SUPPORTED_PRODUCT, type EvidenceSnapshot, type Offer, type Product } from "../domain.js";
+import { errorLogDetails, type PipelineLogger } from "../pipeline-logging.js";
 
 export type SensoOfficialSource = {
   readonly offerId: Offer["id"];

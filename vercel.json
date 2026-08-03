@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/policy-evidence.ts": { "maxDuration": 60 },
+    "api/policy-extraction.ts": { "maxDuration": 60 },
+    "api/checkout-quotes.ts": { "maxDuration": 120 },
+    "api/checkout-authorizations.ts": { "maxDuration": 30 },
+    "api/checkout.ts": { "maxDuration": 60 },
+    "api/checkout-result.ts": { "maxDuration": 120 }
+  }
+}

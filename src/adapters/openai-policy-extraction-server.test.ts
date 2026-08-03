@@ -288,4 +288,42 @@ describe("OpenAI policy extraction server boundary", () => {
     });
     expect(result).toMatchObject({ _tag: "err", error: { kind: "cancelled" } });
   });
+
+  it("logs safe OpenAI API error metadata without the upstream message", async () => {
+    const entries: PipelineLogEntry[] = [];
+    const logger = createPipelineLogger({
+      traceId: "trace-openai-quota",
+      scope: "server",
+      sink: (entry) => { entries.push(entry); },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "credit_balance_exhausted",
+        type: "insufficient_quota",
+        message: "sensitive upstream account description",
+      },
+    }), {
+      status: 429,
+      headers: {
+        "x-request-id": "req_safe_identifier",
+      },
+    }));
+
+    const result = await extractPoliciesWithOpenAi(evidence, {
+      apiKey: openAiApiKeyFrom("test-key"),
+      fetcher,
+      logger,
+    });
+
+    expect(result).toMatchObject({ _tag: "err", error: { kind: "api", cause: 429 } });
+    const failure = entries.find((entry) =>
+      entry.stage === "openai.responses_api" && entry.status === "failed");
+    expect(failure?.details).toMatchObject({
+      httpStatus: 429,
+      requestId: "req_safe_identifier",
+      upstreamCode: "credit_balance_exhausted",
+      upstreamType: "insufficient_quota",
+    });
+    expect(JSON.stringify(entries)).not.toContain("sensitive upstream account description");
+  });
 });

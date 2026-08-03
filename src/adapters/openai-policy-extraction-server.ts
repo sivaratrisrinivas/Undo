@@ -4,8 +4,8 @@ import {
   SUPPORTED_OFFERS,
   type EvidenceSnapshot,
   type PolicyAssessment,
-} from "../domain.ts";
-import { errorLogDetails, type PipelineLogger } from "../pipeline-logging.ts";
+} from "../domain.js";
+import { errorLogDetails, type PipelineLogger } from "../pipeline-logging.js";
 
 const citationSchema = {
   type: "object",
@@ -449,6 +449,24 @@ export type OpenAiExtractionResult =
       };
     };
 
+function safeOpenAiErrorDetails(payload: unknown): Readonly<{
+  upstreamCode?: string;
+  upstreamType?: string;
+}> {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return {};
+  const error = (payload as { readonly error?: unknown }).error;
+  if (typeof error !== "object" || error === null || Array.isArray(error)) return {};
+  const candidate = error as { readonly code?: unknown; readonly type?: unknown };
+  return {
+    ...(typeof candidate.code === "string" && candidate.code.length <= 100
+      ? { upstreamCode: candidate.code }
+      : {}),
+    ...(typeof candidate.type === "string" && candidate.type.length <= 100
+      ? { upstreamType: candidate.type }
+      : {}),
+  };
+}
+
 /** Redacts the secret at configuration load and exposes only an opaque credential. */
 export function openAiApiKeyFrom(value: string | undefined): OpenAiApiKey | undefined {
   if (value === undefined || value.trim() === "") return undefined;
@@ -558,10 +576,19 @@ export async function extractPoliciesWithOpenAi(
     ...(requestId === null ? {} : { requestId }),
   });
   if (!response.ok) {
+    let upstreamDetails: ReturnType<typeof safeOpenAiErrorDetails> = {};
+    try {
+      upstreamDetails = safeOpenAiErrorDetails(await response.json());
+    } catch {
+      // The HTTP status and request id still identify an unparseable upstream failure.
+    }
+    const retryAfter = response.headers.get("retry-after");
     options.logger?.log("openai.responses_api", "failed", {
       errorKind: "api",
       httpStatus: response.status,
       ...(requestId === null ? {} : { requestId }),
+      ...(retryAfter === null ? {} : { retryAfter }),
+      ...upstreamDetails,
     });
     return { _tag: "err", error: { kind: "api", cause: response.status } };
   }

@@ -120,6 +120,46 @@ The hosted sandbox card flow and its safe pipeline stages are documented in
 [docs/prava-hosted-sandbox.md](docs/prava-hosted-sandbox.md). Card details and generated one-time
 credentials are never stored in `.env.local`.
 
+## Deploy to Vercel
+
+Undo deploys as a Vite site plus six Node.js Vercel Functions. Purchase authorizations, hosted-payment
+sessions, and checkout locks use Upstash Redis so they remain valid across serverless instances.
+
+Prerequisites:
+
+1. Create or link the Vercel project and attach one Upstash Redis database from the Vercel Marketplace.
+   The integration supplies `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically.
+2. Add the service variables from `.env.example` to both Preview and Production. Keep all API keys,
+   Prava agent credentials, and Redis tokens encrypted in Vercel; never prefix them with `VITE_`.
+3. Ensure the OpenAI API organization has available credits. A valid key with no credits returns
+   `credit_balance_exhausted`, which Undo logs safely and treats as a fail-closed extraction outage.
+
+For this repository's existing project, link from the repository root:
+
+```sh
+vercel link --yes --scope srini5 --project undo
+```
+
+Build and deploy a Preview, then verify it before Production:
+
+```sh
+vercel pull --yes --environment=preview
+vercel build
+vercel deploy --prebuilt
+```
+
+Promote a production-ready build:
+
+```sh
+vercel pull --yes --environment=production
+vercel build --prod
+vercel deploy --prebuilt --prod
+```
+
+Use `vercel logs <deployment-url>` for correlated server events and follow a request using its `traceId`.
+For automatic deployments on every Git push, connect the GitHub repository in Vercel Project Settings
+after adding GitHub as a Vercel account login connection.
+
 ## Reference docs
 
 - [Domain glossary](CONTEXT.md)

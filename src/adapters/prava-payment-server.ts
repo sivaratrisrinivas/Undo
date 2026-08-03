@@ -1,8 +1,8 @@
-import type { PravaCheckoutRequest, PravaCheckoutResult } from "../domain.ts";
+import type { PravaCheckoutRequest, PravaCheckoutResult } from "../domain.js";
 import {
   OneTimePravaCheckoutCredential,
   type PravaCheckoutCredentials,
-} from "./prava-shopping-server.ts";
+} from "./prava-shopping-server.js";
 
 export type PravaPaymentSession = {
   readonly sessionId: string;

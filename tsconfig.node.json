@@ -8,6 +8,7 @@
     "moduleResolution": "Bundler"
   },
   "include": [
+    "api/**/*.ts",
     "vite.config.ts",
     "playwright.config.ts",
     "tests/browser/**/*.ts",
@@ -16,6 +17,7 @@
     "src/adapters/senso-evidence-server.ts",
     "src/adapters/openai-policy-extraction-server.ts",
     "src/adapters/prava-payment-server.ts",
-    "src/adapters/prava-shopping-server.ts"
+    "src/adapters/prava-shopping-server.ts",
+    "src/server/**/*.ts"
   ]
 }

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createPrivateKey, sign } from "node:crypto";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -10,12 +11,12 @@ import {
   type PravaCheckoutRequest,
   type PravaCheckoutResult,
   type Product,
-} from "../domain.ts";
+} from "../domain.js";
 import {
   errorLogDetails,
   type PipelineLogDetails,
   type PipelineLogger,
-} from "../pipeline-logging.ts";
+} from "../pipeline-logging.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -405,11 +406,174 @@ export const runInstalledPrava: PravaCommandRunner = async (args, timeoutMs) => 
   }
 };
 
+type PravaWalletApiConfig = {
+  readonly baseUrl: string;
+  readonly agentId: string;
+  readonly privateKey: string;
+};
+
+function walletApiConfigFrom(
+  env: Readonly<Record<string, string | undefined>>,
+): PravaWalletApiConfig | undefined {
+  const agentId = env.PRAVA_AGENT_ID?.trim();
+  const privateKey = env.PRAVA_AGENT_PRIVATE_KEY?.trim();
+  if (agentId === undefined || agentId === "" || privateKey === undefined || privateKey === "") {
+    return undefined;
+  }
+  const rawUrl = env.PRAVA_WALLET_API_URL?.trim() || "https://pay-api.prava.space";
+  const url = new URL(rawUrl);
+  if (
+    url.protocol !== "https:" ||
+    !url.hostname.endsWith(".prava.space") ||
+    url.pathname.replace(/\/$/, "") !== "" ||
+    !/^[A-Za-z0-9_-]{6,200}$/.test(agentId)
+  ) {
+    throw new Error("Prava Wallet API configuration is invalid");
+  }
+  createPrivateKey({
+    key: Buffer.from(privateKey, "base64"),
+    format: "der",
+    type: "pkcs8",
+  });
+  return { baseUrl: url.origin, agentId, privateKey };
+}
+
+function argumentAfter(args: ReadonlyArray<string>, name: string): string | undefined {
+  const index = args.indexOf(name);
+  const value = index < 0 ? undefined : args[index + 1];
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function directWalletRequest(
+  args: ReadonlyArray<string>,
+): { readonly path: string; readonly body: Record<string, unknown>; readonly envelope: boolean } {
+  if (args[0] !== "shop") throw new Error("Unsupported Prava command group");
+  if (args[1] === "product") {
+    const productId = argumentAfter(args, "--product-id");
+    const merchant = argumentAfter(args, "--merchant");
+    if (productId === undefined || merchant === undefined) throw new Error("Invalid Prava product command");
+    return {
+      path: "/v1/wallet/shop/product",
+      body: { product_id: productId, merchantDomain: merchant },
+      envelope: false,
+    };
+  }
+  if (args[1] === "quote") {
+    const variantId = argumentAfter(args, "--variant-id");
+    const merchant = argumentAfter(args, "--merchant");
+    const quantity = Number(argumentAfter(args, "--quantity") ?? "1");
+    const addressId = argumentAfter(args, "--address-id");
+    if (
+      variantId === undefined || merchant === undefined ||
+      !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10
+    ) throw new Error("Invalid Prava quote command");
+    return {
+      path: "/v1/wallet/shop/quote",
+      body: {
+        variant_id: variantId,
+        merchantDomain: merchant,
+        quantity,
+        ...(addressId === undefined ? {} : { address_id: addressId }),
+      },
+      envelope: false,
+    };
+  }
+  if (args[1] === "checkout") {
+    const checkoutSessionId = argumentAfter(args, "--checkout-session-id");
+    const token = argumentAfter(args, "--token");
+    const cryptogram = argumentAfter(args, "--cryptogram");
+    const expiryMonth = argumentAfter(args, "--expiry-month");
+    const expiryYear = argumentAfter(args, "--expiry-year");
+    if (checkoutSessionId === undefined || token === undefined || cryptogram === undefined) {
+      throw new Error("Invalid Prava checkout command");
+    }
+    return {
+      path: "/v1/wallet/shop/checkout",
+      body: {
+        checkout_session_id: checkoutSessionId,
+        credentials: {
+          token,
+          cryptogram,
+          ...(expiryMonth === undefined ? {} : { expiry_month: expiryMonth }),
+          ...(expiryYear === undefined ? {} : { expiry_year: expiryYear }),
+        },
+      },
+      envelope: true,
+    };
+  }
+  throw new Error("Unsupported Prava shopping command");
+}
+
+/** Executes the same signed Prava shopping contract without local CLI filesystem state. */
+export function createPravaWalletApiRunner(
+  env: Readonly<Record<string, string | undefined>>,
+  fetcher: typeof fetch = fetch,
+): PravaCommandRunner {
+  const config = walletApiConfigFrom(env);
+  if (config === undefined) throw new Error("Prava Wallet API agent configuration is incomplete");
+  return async (args, timeoutMs) => {
+    try {
+      const request = directWalletRequest(args);
+      const body = JSON.stringify(request.body);
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const key = createPrivateKey({
+        key: Buffer.from(config.privateKey, "base64"),
+        format: "der",
+        type: "pkcs8",
+      });
+      const signature = sign(null, Buffer.from(timestamp + body), key).toString("base64");
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+      let response: Response;
+      try {
+        response = await fetcher(`${config.baseUrl}${request.path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Agent-Id": config.agentId,
+            "X-Skill-Name": "prava-shopping",
+            "X-Timestamp": timestamp,
+            "X-Signature": signature,
+          },
+          body,
+          signal: abortController.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      const payload: unknown = await response.json().catch(() => ({}));
+      const envelope = record(payload);
+      if (!response.ok || envelope?.success === false) {
+        return { exitCode: 1, stdout: "", stderr: "Prava Wallet API request failed" };
+      }
+      const output = request.envelope ? payload : envelope?.data;
+      if (output === undefined) {
+        return { exitCode: 1, stdout: "", stderr: "Prava Wallet API response was incomplete" };
+      }
+      return { exitCode: 0, stdout: JSON.stringify(output), stderr: "" };
+    } catch (cause: unknown) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "Prava Wallet API request failed",
+        timedOut: cause instanceof Error && cause.name === "AbortError",
+      };
+    }
+  };
+}
+
+const runServerPrava: PravaCommandRunner = (args, timeoutMs) => {
+  const directConfig = walletApiConfigFrom(process.env);
+  return directConfig === undefined
+    ? runInstalledPrava(args, timeoutMs)
+    : createPravaWalletApiRunner(process.env)(args, timeoutMs);
+};
+
 /** Obtains independently verified live quotes for every curated Offer. */
 export async function quoteOffersWithPrava(
   offers: ReadonlyArray<Offer>,
   destinationReference: string,
-  runner: PravaCommandRunner = runInstalledPrava,
+  runner: PravaCommandRunner = runServerPrava,
   logger?: PipelineLogger,
 ): Promise<PravaQuoteResult> {
   logger?.log("prava.quote_batch", "started", { offerCount: offers.length });
@@ -588,7 +752,7 @@ async function prepareAuthorizedCheckout(
 export async function checkoutWithPrava(
   request: PravaCheckoutRequest,
   credential: OneTimePravaCheckoutCredential | undefined,
-  runner: PravaCommandRunner = runInstalledPrava,
+  runner: PravaCommandRunner = runServerPrava,
   now: () => number = Date.now,
   logger?: PipelineLogger,
 ): Promise<PravaCheckoutResult> {
