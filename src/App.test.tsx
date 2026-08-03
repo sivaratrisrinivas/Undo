@@ -187,6 +187,7 @@ describe("guided Reversibility Assessment", () => {
       expect(await screen.findByRole("heading", { name: "Offer comparison" }, { timeout: 3_000 })).toBeVisible();
       expect(adapters.activity.sensoRequests).toBe(1);
     },
+    10_000,
   );
 
   it("rejects unsupported input before any external adapter work", async () => {

@@ -190,14 +190,17 @@ function policyBlockingExplanation(policy: PolicyAssessment): string {
   if (policy.changeOfMind === "none") {
     return "Not reversible: defect remedy only";
   }
-  const reasons = [
-    policy.changeOfMind === "unclear" ||
-    policy.remedyWindow.kind === "unclear" ||
-    policy.productCondition === "unclear" ||
-    policy.returnTransport === "unclear" ||
-    policy.reversalCost.kind === "unclear"
-      ? "Policy Unclear"
+  const unclearFacts = [
+    policy.changeOfMind === "unclear" ? "Change-of-Mind Remedy not stated" : undefined,
+    policy.remedyWindow.kind === "unclear"
+      ? "Remedy Window missing duration, start event, or deadline action"
       : undefined,
+    policy.productCondition === "unclear" ? "Product Condition not stated" : undefined,
+    policy.returnTransport === "unclear" ? "Return Transport not stated" : undefined,
+    policy.reversalCost.kind === "unclear" ? "Buyer-Paid Fees contradictory or incomplete" : undefined,
+  ].flatMap((fact) => fact === undefined ? [] : [fact]);
+  const reasons = [
+    unclearFacts.length > 0 ? `Policy Unclear (${unclearFacts.join("; ")})` : undefined,
     policy.reversalCost.kind === "unpriced_required" ? "Unpriced Required Cost" : undefined,
   ].flatMap((reason) => reason === undefined ? [] : [reason]);
   return reasons.length === 0 ? "Blocked: Policy Unclear" : `Blocked: ${reasons.join("; ")}`;
@@ -811,6 +814,9 @@ export class AssessmentWorkflow {
     logger?.log("offer.validation", "succeeded", {
       offers: assessedBeforeRanking.map((offer) =>
         `${offer.offer.id}:equivalent=${String(offer.offerEquivalent)},available=${String(offer.checkoutQuote.purchaseAvailable)},evidence=${String(offer.evidenceEligible)},policy=${String(isPolicyEligible(offer.policy))},eligible=${String(offer.eligible)}`),
+      policyBlocks: assessedBeforeRanking
+        .filter((offer) => !isPolicyEligible(offer.policy))
+        .map((offer) => `${offer.offer.id}:${policyBlockingExplanation(offer.policy).replace(/^Blocked: /, "")}`),
     });
     logger?.log("premium_baseline", "succeeded", { baselineTotalInr: baselineTotal, premiumLimitInr });
 

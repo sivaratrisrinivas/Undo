@@ -236,4 +236,49 @@ describe("Remedy Ranking", () => {
 
     expect(result).toMatchObject({ _tag: "err", error: { reason: "blocked_by_policy" } });
   });
+
+  it("names the exact required policy fact that blocks the only purchasable Offer", async () => {
+    const policies = SUPPORTED_OFFERS.map((offer) =>
+      offer.id === "headphone-zone"
+        ? { ...makePolicy(offer.id), remedyWindow: { kind: "unclear" as const } }
+        : { ...makePolicy(offer.id), changeOfMind: "none" as const },
+    );
+    const quotes: ReadonlyArray<CheckoutQuote> = [
+      quoteFor("headphone-zone", 10_000, true),
+      quoteFor("concept-kart", 10_000, false),
+      quoteFor("flipkart", 10_000, false),
+    ];
+    const pipelineEntries: Array<{
+      readonly stage: string;
+      readonly details: Readonly<Record<string, unknown>> | undefined;
+    }> = [];
+    const adapters: AssessmentAdapters = {
+      ...makeAdapters(policies, quotes),
+      pipeline: {
+        nextTraceId: () => "trace-policy-block",
+        logger: (traceId) => ({
+          traceId,
+          log: (stage, _status, details) => { pipelineEntries.push({ stage, details }); },
+        }),
+      },
+    };
+
+    const result = await new AssessmentWorkflow(adapters).assess(
+      SUPPORTED_PRODUCT,
+      premiumLimit("2000"),
+      "destination-ref-test",
+    );
+
+    expect(result._tag).toBe("err");
+    if (result._tag === "err") {
+      expect(result.error).toMatchObject({ reason: "blocked_by_policy" });
+      expect(result.error.message).toContain(
+        "Headphone Zone: Policy Unclear (Remedy Window missing duration, start event, or deadline action)",
+      );
+    }
+    const offerValidation = pipelineEntries.find((entry) => entry.stage === "offer.validation");
+    expect(offerValidation?.details?.policyBlocks).toContain(
+      "headphone-zone:Policy Unclear (Remedy Window missing duration, start event, or deadline action)",
+    );
+  });
 });

@@ -52,10 +52,8 @@ OPENAI_POLICY_MODEL=gpt-5.6-sol
 PRAVA_SECRET_KEY=sk_test_your_key
 PRAVA_PUBLISHABLE_KEY=pk_test_your_key
 PRAVA_API_BASE_URL=https://sandbox.api.prava.space
-PRAVA_SANDBOX_TOKEN=one_time_network_token
-PRAVA_SANDBOX_CRYPTOGRAM=one_time_cryptogram
-PRAVA_SANDBOX_EXPIRY_MONTH=12
-PRAVA_SANDBOX_EXPIRY_YEAR=2028
+PRAVA_DEMO_USER_ID=undo-solo-team
+PRAVA_DEMO_USER_EMAIL=solo@undo.demo
 ```
 
 Link Prava and confirm that its saved destination is ready:
@@ -69,9 +67,30 @@ npx prava status
 Start the real service-backed app or the deterministic demo:
 
 ```sh
-npm run dev
+npm run dev 2>&1 | tee /tmp/undo-live-pipeline.log
 VITE_EVIDENCE_MODE=fake npm run dev
 ```
+
+The first command runs the complete local application and keeps a copy of every correlated browser/server
+pipeline event in `/tmp/undo-live-pipeline.log`. Follow one attempt by its `traceId`. The deterministic mode
+is for UI rehearsal only and must not be presented as proof that Senso, OpenAI, Prava, or a merchant checkout
+ran live.
+
+## Current live-policy behavior
+
+The current Headphone Zone policy says a sealed, unopened product may qualify for a refund, but it does not
+state that refund's duration, clock-start event, and deadline action. Its seven-day wording belongs to Easy
+Exchange/store credit, and the supported HD 560S product page does not establish Easy Exchange eligibility.
+Undo therefore correctly stops before Purchase Authorization with:
+
+```text
+Policy Unclear (Remedy Window missing duration, start event, or deadline action)
+```
+
+This is a successful fail-closed assessment, not a Senso, OpenAI, or Prava outage. The same detail appears in
+the structured `offer.validation.policyBlocks` pipeline field. Do not copy a window from a different remedy
+or bypass this block for a recording; applicable official evidence must support every required fact before
+the hosted Prava checkout can open.
 
 ## Verify
 
@@ -81,14 +100,25 @@ npm run test:browser
 npm run lint
 npm run typecheck
 npm run build
+npm run test:demo-gates
 ```
 
 Live checks are opt-in because they require configured services:
 
 ```sh
 npm run test:senso-live
+npm run test:openai-live
 npm run test:prava-live
 ```
+
+The repeatable three-minute talk track, live verification ledger, outage rehearsal, timing method, and
+human-approved sandbox purchase procedure are in [docs/demo-runbook.md](docs/demo-runbook.md). The live
+checks are read-only quote/extraction checks; sandbox payment attempts remain separately approved manual
+operations and are never implied by the deterministic test suite.
+
+The hosted sandbox card flow and its safe pipeline stages are documented in
+[docs/prava-hosted-sandbox.md](docs/prava-hosted-sandbox.md). Card details and generated one-time
+credentials are never stored in `.env.local`.
 
 ## Reference docs
 
@@ -97,3 +127,5 @@ npm run test:prava-live
 - [Product flow](docs/product-flow.md)
 - [Evaluation plan](docs/evaluation-plan.md)
 - [Architecture decisions](docs/adr/)
+- [Hosted Prava sandbox flow](docs/prava-hosted-sandbox.md)
+- [Three-minute demo runbook](docs/demo-runbook.md)

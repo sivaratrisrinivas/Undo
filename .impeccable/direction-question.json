@@ -1,0 +1,46 @@
+{
+  "title": "Choose Undo’s visual world",
+  "question": "Keep the precision-led direction, steer it, or take the familiar category standard.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Quiet Mastering Console",
+      "kicker": "THE DIRECTION",
+      "lineage": "Professional audio mastering consoles and milled precision instruments",
+      "thesis": "The buyer tunes three decisions while Undo resolves every hidden check into one evidence-backed channel.",
+      "palette": [
+        "#f4f4f0",
+        "#141512",
+        "#c7ff4a",
+        "#9da39b"
+      ],
+      "materials": [
+        "anodized aluminium",
+        "smoked glass",
+        "printed calibration marks"
+      ],
+      "viewport": "One uninterrupted control surface: setup on the left, the recommended Offer as the dominant readout on the right, and all seven checks condensed into a live assurance rail.",
+      "risk": "It can drift into dense pro-audio software if the readout hierarchy is not ruthlessly reduced."
+    }
+  ],
+  "reroll": true,
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A polished comparison dashboard with cards, a stepper, and a conventional checkout wizard.",
+    "palette": [
+      "#ffffff",
+      "#111827",
+      "#2563eb",
+      "#e5e7eb"
+    ],
+    "materials": [
+      "white cards",
+      "soft shadows",
+      "blue controls"
+    ],
+    "viewport": "A standard header, comparison-card grid, and prominent continue button leading into sequential screens.",
+    "risk": "Immediately familiar, but it preserves the seven-step feeling the redesign is meant to remove."
+  },
+  "steer": true
+}
