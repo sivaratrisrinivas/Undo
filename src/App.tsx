@@ -30,7 +30,7 @@ const actionIndex: Readonly<Record<Stage, number>> = {
 
 const paymentMethod = {
   id: "prava_one_time_prepaid" satisfies AuthorizedPaymentMethod,
-  label: "Prava one-time prepaid sandbox",
+  label: "Prava hosted sandbox card",
 } as const;
 
 /** Renders Undo as a three-action assessment with injected external adapters. */
@@ -145,6 +145,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
 
   async function authorizeAndSubmit() {
     if (assessment === undefined || selectedOffer === undefined || approvalSummary === undefined) return;
+    adapters.prava.prepareCheckout?.();
     setError(undefined);
     setLoading(true);
     const authorizationResult = await workflow.authorizePurchase(
@@ -153,6 +154,7 @@ export function App({ adapters }: { readonly adapters: AssessmentAdapters }) {
       acknowledgedWarnings,
     );
     if (authorizationResult._tag === "err") {
+      adapters.prava.cancelPreparedCheckout?.();
       setLoading(false);
       setError("Purchase Authorization is unavailable until the exact summary and every Material Warning are approved.");
       return;

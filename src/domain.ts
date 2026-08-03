@@ -498,7 +498,7 @@ export const SUPPORTED_OFFERS: ReadonlyArray<Offer> = [
 
 /** Curated official merchant sources accepted for Policy Evidence retrieval. */
 export const OFFICIAL_EVIDENCE_SOURCES = [
-  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "category", value: "Selected Easy Exchange products" }, applicability: "unverified", requiredTextMarkers: ["# Returns & Exchanges", "Easy Exchange"] },
+  { offerId: "headphone-zone", merchant: "Headphone Zone", sourceUrl: "https://www.headphonezone.in/pages/help-center-returns-exchanges", scope: { kind: "category", value: "Products eligible for sealed-unopened refunds" }, applicability: "confirmed", requiredTextMarkers: ["# Returns & Exchanges", "You return a sealed, unopened product"] },
   { offerId: "concept-kart", merchant: "Concept Kart", sourceUrl: "https://conceptkart.com/pages/replacement-return-policy", scope: { kind: "category", value: "Headphones" }, applicability: "confirmed", requiredTextMarkers: ["# Replacement Policy", "ten-day replacement policy"] },
   { offerId: "flipkart", merchant: "Flipkart", sourceUrl: "https://www.flipkart.com/pages/returnpolicy", scope: { kind: "category", value: "Headphones" }, applicability: "confirmed", requiredTextMarkers: ["# Order Cancellation and Return Policy", "# Returns Policy"] },
 ] as const satisfies ReadonlyArray<{

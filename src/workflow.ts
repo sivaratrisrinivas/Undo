@@ -53,6 +53,8 @@ export type AssessmentAdapters = {
     ): Promise<AdapterResult<ReadonlyArray<PolicyAssessment>>>;
   };
   readonly prava: {
+    prepareCheckout?(): void;
+    cancelPreparedCheckout?(): void;
     quoteOffers(
       offers: ReadonlyArray<Offer>,
       destinationReference: string,

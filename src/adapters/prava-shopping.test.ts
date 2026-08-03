@@ -121,7 +121,7 @@ describe("Prava shopping browser boundary", () => {
     expect(body).not.toMatch(/"(?:token|cryptogram|cvv|cardNumber|phone|street)"/i);
   });
 
-  it("treats an unreadable response after submission as outcome unknown", async () => {
+  it("treats an unreadable pre-payment response as not submitted", async () => {
     let call = 0;
     const fetcher: typeof fetch = () => {
       call += 1;
@@ -149,6 +149,141 @@ describe("Prava shopping browser boundary", () => {
     expect(await adapter.registerCheckout(request)).toBe("registered");
     const result = await adapter.submitCheckout(request);
 
-    expect(result).toMatchObject({ _tag: "submitted", paymentStatus: "unknown", merchantOrderIdentifier: null });
+    expect(result).toMatchObject({
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+      explanation: "Prava payment approval did not reach merchant checkout",
+    });
+  });
+
+  it("opens the hosted Prava surface and polls without exposing payment credentials", async () => {
+    const offer = SUPPORTED_OFFERS[0];
+    if (offer === undefined) throw new Error("Missing Offer");
+    const request: PravaCheckoutRequest = {
+      authorizationId: "authorization-hosted-001",
+      expiresAt: "2026-08-03T12:10:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer,
+      destinationReference: "addr_home1",
+      maximumTotalInr: 12_990,
+      paymentMethod: "prava_one_time_prepaid",
+    };
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetcher: typeof fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      requests.push({ url, init: init ?? {} });
+      if (url === "/api/checkout-authorizations") {
+        return Promise.resolve(new Response(JSON.stringify({ checkoutGrant: "checkout-grant" }), { status: 201 }));
+      }
+      if (url === "/api/checkout") {
+        return Promise.resolve(new Response(JSON.stringify({
+          paymentSession: {
+            sessionId: "sess_hosted_001",
+            iframeUrl: "https://checkout.prava.space/s/sess_hosted_001",
+            expiresAt: "2026-08-03T12:10:00.000Z",
+            paymentGrant: "payment-grant",
+          },
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        status: "completed",
+        result: {
+          _tag: "submitted",
+          paymentStatus: "successful",
+          merchantOrderIdentifier: "merchant-order-hosted-001",
+          confirmedTotalInr: 12_990,
+        },
+      }), { status: 200 }));
+    };
+    const paymentWindow = {
+      closed: false,
+      location: { href: "about:blank" },
+      close() { this.closed = true; },
+    };
+    const adapter = createPravaShoppingAdapter({
+      fetcher,
+      openPaymentWindow: () => paymentWindow,
+      now: () => Date.parse("2026-08-03T12:00:00.000Z"),
+      wait: () => Promise.resolve(),
+    });
+
+    adapter.prepareCheckout?.();
+    expect(await adapter.registerCheckout(request, "trace-hosted-001")).toBe("registered");
+    await expect(adapter.submitCheckout(request, "trace-hosted-001")).resolves.toMatchObject({
+      paymentStatus: "successful",
+      merchantOrderIdentifier: "merchant-order-hosted-001",
+    });
+    expect(paymentWindow.location.href).toBe("https://checkout.prava.space/s/sess_hosted_001");
+    expect(paymentWindow.closed).toBe(true);
+    expect(requests.map(({ url }) => url)).toEqual([
+      "/api/checkout-authorizations",
+      "/api/checkout",
+      "/api/checkout-result",
+    ]);
+    const pollBody = requests[2]?.init.body;
+    if (typeof pollBody !== "string") throw new Error("Expected a JSON poll body");
+    expect(JSON.parse(pollBody)).toEqual({
+      sessionId: "sess_hosted_001",
+      paymentGrant: "payment-grant",
+    });
+    expect(JSON.stringify(requests)).not.toMatch(/411111|dynamic_cvv|cryptogram/i);
+  });
+
+  it("records a typed pre-checkout polling outage as not submitted", async () => {
+    const offer = SUPPORTED_OFFERS[0];
+    if (offer === undefined) throw new Error("Missing Offer");
+    const request: PravaCheckoutRequest = {
+      authorizationId: "authorization-hosted-expired",
+      expiresAt: "2026-08-03T12:10:00.000Z",
+      product: SUPPORTED_PRODUCT,
+      quantity: 1,
+      offer,
+      destinationReference: "addr_home1",
+      maximumTotalInr: 12_990,
+      paymentMethod: "prava_one_time_prepaid",
+    };
+    let call = 0;
+    const fetcher: typeof fetch = () => {
+      call += 1;
+      if (call === 1) return Promise.resolve(new Response(JSON.stringify({ checkoutGrant: "checkout-grant" }), { status: 201 }));
+      if (call === 2) return Promise.resolve(new Response(JSON.stringify({
+        paymentSession: {
+          sessionId: "ses_expiring_001",
+          iframeUrl: "https://checkout.prava.space/s/ses_expiring_001",
+          expiresAt: "2026-08-03T12:00:02.000Z",
+          paymentGrant: "payment-grant",
+        },
+      }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({
+        error: "Prava payment status unavailable",
+        merchantCheckoutMayHaveStarted: false,
+      }), { status: 503 }));
+    };
+    const paymentWindow = {
+      closed: false,
+      location: { href: "about:blank" },
+      close() { this.closed = true; },
+    };
+    let clock = Date.parse("2026-08-03T12:00:00.000Z");
+    const adapter = createPravaShoppingAdapter({
+      fetcher,
+      openPaymentWindow: () => paymentWindow,
+      now: () => clock,
+      wait: () => { clock += 2_000; return Promise.resolve(); },
+    });
+
+    adapter.prepareCheckout?.();
+    expect(await adapter.registerCheckout(request)).toBe("registered");
+    const result = await adapter.submitCheckout(request);
+    expect(result).toMatchObject({
+      _tag: "not_submitted",
+      reason: "purchase_unavailable",
+    });
+    if (result._tag === "not_submitted") {
+      expect(result.explanation).toMatch(/expired before merchant checkout/i);
+    }
+    expect(paymentWindow.closed).toBe(true);
+    expect(call).toBe(3);
   });
 });

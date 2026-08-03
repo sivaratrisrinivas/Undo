@@ -203,7 +203,7 @@ export function AssessmentConsole(props: {
               {!props.purchaseEnabled && <p className="error-message" role="alert">Purchase Authorization is blocked until the human-reviewed policy contract is enabled.</p>}
               {props.error !== undefined && <p className="error-message" role="alert">{props.error}</p>}
               <button className="primary-button authorize-button" disabled={!canSubmit} onClick={props.onAuthorizeAndSubmit} type="button">
-                <span>{props.loading ? "Authorizing and submitting once…" : `Authorize ${formatInr(summary.maximumTotalInr)} & submit once`}</span>
+                <span>{props.loading ? "Complete the Prava sandbox approval…" : `Authorize ${formatInr(summary.maximumTotalInr)} & submit once`}</span>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h13M14 7l5 5-5 5" /></svg>
               </button>
               <button className="secondary-button" disabled={props.loading} onClick={props.onDecline} type="button">Save assessment without buying</button>

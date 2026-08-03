@@ -169,7 +169,7 @@ describe("Policy Evidence workflow", () => {
     if (headphoneZone === undefined || conceptKart === undefined) {
       throw new Error("Missing applicability fixtures");
     }
-    expect(officialEvidenceAppliesToSupportedProduct(headphoneZone)).toBe(false);
+    expect(officialEvidenceAppliesToSupportedProduct(headphoneZone)).toBe(true);
     expect(officialEvidenceAppliesToSupportedProduct(conceptKart)).toBe(true);
     const entries: PipelineLogEntry[] = [];
     const baseAdapters = adapters(snapshots, SUPPORTED_OFFERS.map((offer) => policyFor(offer.id)), [], {
@@ -300,7 +300,7 @@ describe("Policy Evidence workflow", () => {
       expect(result.value.offers[0]).toMatchObject({
         evidence: {
           merchant: "Headphone Zone",
-          scope: { kind: "category", value: "Selected Easy Exchange products" },
+          scope: { kind: "category", value: "Products eligible for sealed-unopened refunds" },
           retrievedVia: "senso",
           retrievalState: "current",
         },

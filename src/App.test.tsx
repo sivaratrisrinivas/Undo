@@ -68,7 +68,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getAllByText(/sealed and unopened/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Current Evidence").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("Reviewed Evidence").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText("category: Selected Easy Exchange products").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("category: Products eligible for sealed-unopened refunds").length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", {
         name: /https:\/\/www\.headphonezone\.in\/pages\/help-center-returns-exchanges/,
@@ -77,7 +77,7 @@ describe("guided Reversibility Assessment", () => {
     expect(screen.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
     expect(screen.getByText(/Standard retail package · India warranty region/)).toBeVisible();
     expect(screen.getByText("1 / destination-ref-prava-default")).toBeVisible();
-    expect(screen.getByText("Prava one-time prepaid sandbox")).toBeVisible();
+    expect(screen.getByText("Prava hosted sandbox card")).toBeVisible();
     expect(screen.getByText("₹14,990 / ₹14,990")).toBeVisible();
     expect(screen.getByText(/1\/8\/2026.*Current Evidence.*Reviewed Evidence/)).toBeVisible();
     expect(screen.getByRole("button", { name: /Authorize ₹14,990 & submit once/ })).toBeDisabled();

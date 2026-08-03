@@ -87,21 +87,6 @@ export class OneTimePravaCheckoutCredential {
   }
 }
 
-/** Reads a complete one-time sandbox credential without exposing partial values. */
-export function pravaCheckoutCredentialsFrom(
-  env: Readonly<Record<string, string | undefined>>,
-): OneTimePravaCheckoutCredential | undefined {
-  const token = stringAt(env.PRAVA_SANDBOX_TOKEN);
-  const cryptogram = stringAt(env.PRAVA_SANDBOX_CRYPTOGRAM);
-  const expiryMonth = stringAt(env.PRAVA_SANDBOX_EXPIRY_MONTH);
-  const expiryYear = stringAt(env.PRAVA_SANDBOX_EXPIRY_YEAR);
-  return token === undefined || cryptogram === undefined ||
-    expiryMonth === undefined || !/^(0[1-9]|1[0-2])$/.test(expiryMonth) ||
-    expiryYear === undefined || !/^20\d{2}$/.test(expiryYear)
-    ? undefined
-    : new OneTimePravaCheckoutCredential({ token, cryptogram, expiryMonth, expiryYear });
-}
-
 type CatalogConfig = {
   readonly offerId: Offer["id"];
   readonly merchantDomain: string;

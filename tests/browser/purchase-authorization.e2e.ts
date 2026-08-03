@@ -18,7 +18,7 @@ test("one Purchase Authorization produces one completed sandbox checkout in Chro
   await expect(page.getByRole("heading", { name: "Your Reversibility Assessment" })).toBeFocused();
   await expect(page.getByRole("heading", { name: "Offer comparison" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Approval Summary" })).toBeVisible();
-  await expect(page.getByText("Prava one-time prepaid sandbox")).toBeVisible();
+  await expect(page.getByText("Prava hosted sandbox card")).toBeVisible();
 
   const authorize = page.getByRole("button", { name: /Authorize ₹14,990 & submit once/ });
   await expect(authorize).toBeDisabled();
